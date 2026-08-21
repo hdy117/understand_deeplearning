@@ -428,184 +428,35 @@ $F$ 在「先归一化、再激活」的空间里学修正；旁路 $S(x)=x$ 直
 
 ## 8. 一条具体的高速公路：ResNet-50
 
-仓库实现：`resnet50/resnet_50.py`。输入默认 ImageNet $[N,3,224,224]$。读这一节时，把「50 是什么、每一张 feature map 有多大、哪些块是真 identity、浅层和深层的 $F$ 在改什么」当成同一条路，而不是四张独立的表。
+仓库实现：`resnet50/resnet_50.py`。把「50 数什么、Bottleneck 在省什么、shape 在哪换挡」当成同一条路。对照代码即可，不必在笔记里再开一本手册。
 
-### 8.1 「50」数的是带权层，不是 50 个 block
-
-ResNet-50 的 50 = **weighted layers**（Conv + 最后的 fc），按原论文 / 通行约定：
-
-| 不计进 50 | 计进 50 |
-|-----------|---------|
-| BN、ReLU、MaxPool、AdaptiveAvgPool | stem 的 $7\times 7$ Conv |
-| 只做形状对齐的 projection $1\times 1$（通常不计） | 每个 Bottleneck 里 3 个 Conv |
-| | 最后的 fc Linear |
-
-四个 stage 的 Bottleneck 个数固定为 `[3, 4, 6, 3]`：
+**50 数的是带权层**（stem 的 \(7\times 7\)、每个 Bottleneck 的 3 个 Conv、最后的 fc），不是 50 个 block。BN / ReLU / pooling 以及纯对齐用的 projection 通常不计。四个 stage 的 Bottleneck 个数是 `[3,4,6,3]`，一共 16 块：
 
 \[
-1_{\text{stem}}
-+3\times(3+4+6+3)
-+1_{\text{fc}}
-=1+48+1=50.
+1_{\mathrm{stem}}+3\times(3+4+6+3)+1_{\mathrm{fc}}=50.
 \]
 
-| 部分 | 结构 | 计入 50 |
-|------|------|---------|
-| stem | $1\times 7\times 7$ conv | 1 |
-| layer1 | 3 Bottleneck $\times$ 3 conv | 9 |
-| layer2 | 4 Bottleneck $\times$ 3 conv | 12 |
-| layer3 | 6 Bottleneck $\times$ 3 conv | 18 |
-| layer4 | 3 Bottleneck $\times$ 3 conv | 9 |
-| head | 1 $\times$ fc | 1 |
-| 合计 | | **50** |
+ResNet-18/34 用两层 \(3\times 3\) 的 Basic block；50/101/152 换成 Bottleneck，stage 数可以和 34 一样，变深主要是因为每块从 2 个卷积变成 3 个，通道也更宽。
 
-同系列只是在换「每块几层卷积」和「每 stage 几块」：
+较浅时两个 \(3\times 3\) 就够。更深时先 \(1\times 1\) 压通道，在窄通道上做昂贵的 \(3\times 3\)，再 \(1\times 1\) 扩回 \(4C\) 去和 shortcut 加。\(3\times 3\) 的计算跟通道平方有关；先变窄，是用同样预算叠更多 identity 旁路。ResNeXt 后来在窄空间里分组，WideResNet 则加宽减深——都承认 residual 让「加深」不再那么吓人之后，还要在 width 上花钱。
 
-| 名字 | Block | 每 stage blocks | 层数 |
-|------|-------|-----------------|------|
-| ResNet-18 | Basic（2 个 $3\times 3$） | `[2,2,2,2]` | 18 |
-| ResNet-34 | Basic | `[3,4,6,3]` | 34 |
-| **ResNet-50** | **Bottleneck（3 conv）** | **`[3,4,6,3]`** | **50** |
-| ResNet-101 | Bottleneck | `[3,4,23,3]` | 101 |
-| ResNet-152 | Bottleneck | `[3,8,36,3]` | 152 |
-
-50 不是 50 个 residual block——只有 $3+4+6+3=16$ 个 Bottleneck。也不是所有模块的总数。Stage 个数与 ResNet-34 相同；50 变深，主要是因为每块从 2 个 $3\times 3$ 换成了 3 个卷积，并且通道更宽。
-
-### 8.2 为什么是 Bottleneck，而不是两层 $3\times 3$
-
-较浅的 ResNet 用 standard block：两个 $3\times 3$。更深时改成 Bottleneck：
+可加的前提仍是 \(\mathrm{shape}(F)=\mathrm{shape}(S)\)。同 shape 才是真 identity；否则 \(1\times 1\) projection。本仓库把 stride 放在 Bottleneck 的 \(3\times 3\) 上（与 torchvision 一致；2015 论文放在第一个 \(1\times 1\)，会丢掉一部分空间信息）。降采样只发生在 stage 门口（`layer2.0 / 3.0 / 4.0`）：
 
 ```text
-1×1 reduce channels
-  → 3×3 spatial processing   # 昂贵的空间卷积在窄通道上做
-  → 1×1 expand channels
-  → add shortcut
+[N, 3, 224, 224]
+  stem 7×7 s2 + maxpool s2  →  [N,   64, 56, 56]
+  layer1 ×3  (proj 只换通道) →  [N,  256, 56, 56]   true x+F after the first block
+  layer2 ×4  (only .0: s2)   →  [N,  512, 28, 28]   stage door = projection
+  layer3 ×6                 →  [N, 1024, 14, 14]
+  layer4 ×3                 →  [N, 2048,  7,  7]
+  GAP + fc                  →  [N, 1000]
 ```
 
-`expansion=4`：内部窄通道是 $C$，和 shortcut 相加的宽通道是 $4C$。$3\times 3$ 的计算量跟 channel 的平方有关，先压窄再卷积是在买深度：同样的预算下可以叠更多 identity 旁路。ResNeXt 后来在这个窄空间里再切成多组 parallel transformations（cardinality）；WideResNet 则少谈深度、多加 width。两条路都承认：residual 让「加深」不再那么吓人之后，还要在 width 与分组上花钱。第一遍记住 Bottleneck 的契约就够。
+门口那一下不是「又加了一个残差」，是换了一套更粗的坐标系，再在新格子上多次 \(x+F(x)\)。细网格上的 \(F\) 更像补局部描述；\(7\times 7\) 上的 \(F\) 更像微调类方向。这是统计偏好，不是「浅层只学边、深层只学物体」的硬分区。`fc` 只吃 layer4 经 GAP 后的 2048 维：早期信息可以沿图传播进来，却没有被原样归档。代码里 `downsample is None` 才是真 identity；`zero_init_residual` 把每个 `bn3.weight` 置零，让起步靠近 \(F\approx 0\)。
 
-### 8.3 Shape 主线：降采样只发生在 stage 门口
+都叫 skip，契约可以完全不同。ResNet 是同尺度加法，学 \(\Delta\)。DenseNet 是拼接，旧通道留下、宽度增长。U-Net / FPN 是跨尺度把高分辨率细节送回 decoder。分类 ResNet 的深层不会把浅层细节原样交给 `fc`；要像素级边界，必须另拉一条线。
 
-完整的 residual 公式，连上 projection：
-
-\[
-y=\operatorname{ReLU}\bigl(F(x)+S(x)\bigr),
-\qquad
-S(x)=
-\begin{cases}
-x, & \text{H/W 与 channels 都相同},\\
-\operatorname{BN}\bigl(\operatorname{Conv}_{1\times 1,\,s}(x)\bigr), & \text{否则}.
-\end{cases}
-\]
-
-本仓库把 stride 放在 Bottleneck 的 **$3\times 3$** 上（与 torchvision 一致；2015 原论文把 stride 放在第一个 $1\times 1$，会丢掉一部分空间信息）。三条规律先放在路肩上，下面用数字把它们走实：
-
-1. 降采样只发生在 stage 交接的第一个 block（`layer2.0 / 3.0 / 4.0`），靠 $3\times 3$ stride=2；stage 内后续 block 全部 stride=1。
-2. 可加条件是 $\operatorname{shape}(F)=\operatorname{shape}(S)$。同 shape → 真 identity；否则 → $1\times 1$ projection（需要减半空间时带 stride=2）。
-3. Bottleneck 通道套路：宽 → 窄（$1\times 1$）→ $3\times 3$ → 宽 $\times 4$，再和 shortcut 加。
-
-```text
-[N,    3, 224, 224]
-  7×7 s2 ──────────────────────────► [N,   64, 112, 112]  # stem: spatial /2, raise C
-  BN+ReLU, maxpool s2 ─────────────► [N,   64,  56,  56]  # /2 again; residual stages start
-  layer1 ×3 (first block: proj, C↑)► [N,  256,  56,  56]  # channels only; grid still fine
-  layer2 ×4 (only .0: 3×3 s2+proj) ► [N,  512,  28,  28]  # spatial /2, channels ×2
-  layer3 ×6 (only .0: 3×3 s2+proj) ► [N, 1024,  14,  14]
-  layer4 ×3 (only .0: 3×3 s2+proj) ► [N, 2048,   7,   7]
-  GAP + fc ────────────────────────► [N, 1000]
-```
-
-Stem 的 $7\times 7$ 先用大感受野抓住低层边缘和纹理，并把图缩小到算得起的格子上。真正的 residual 游戏从 $56\times 56$ 开始。
-
-**layer1** 三块，stride 全是 1。`layer1.0` 把 64 通道扩到 256，H/W 仍是 56，所以 shortcut 是 $1\times 1$ stride-1 projection——只换通道，不换格子。`layer1.1`、`layer1.2` 进出都是 `[N,256,56,56]`，第一次出现真 $x+F(x)$。三块做完，你仍在细网格上；这里的 $F$ 更像在已有的边缘/颜色图上补更干净的局部描述，而不是写出「这是狗」。细节还够用时，$F\approx 0$ 很有用：不要把 $56\times 56$ 的精细结构毁掉。
-
-**layer2** 是理解「换挡 + 再 refine」的最小完整例子。只有首块 stride=2。
-
-```text
-layer2.0     in [N, 256, 56, 56]
-
-  F:  1×1 s1 → [N, 128, 56, 56]      # bottleneck: cheap 3×3
-      3×3 s2 → [N, 128, 28, 28]      # the only spatial /2 in this stage
-      1×1 s1 → [N, 512, 28, 28]      # expansion=4
-
-  S:  1×1 s2 + BN → [N, 512, 28, 28] # not true identity: H/W and C both change
-
-  y = ReLU(F+S) → [N, 512, 28, 28]
-
-layer2.1–2.3   true x+F(x), frozen shape [N, 512, 28, 28]
-```
-
-```text
-                 ┌── S(x): 1×1 s2 + BN ──→ [N,512,28,28] ──┐
-x [N,256,56,56] ─┤                                           + → ReLU → y
-                 └── F(x): 1×1 → 3×3 s2 → 1×1 ──→ [N,512,28,28] ─┘
-```
-
-`layer3.0`、`layer4.0` 复制同一模板：通道再翻倍（512→1024→2048），空间再减半（28→14→7）。每个 stage 内部则是同分辨率上的多次 $x+F(x)$。中层的 $F$ 开始组合部件和重复结构；stage 门口那一下不是「又加了一个残差」，是换了一套更粗的坐标系，再在新地图上走几步。
-
-**layer4** 已经是 $7\times 7$ 的粗网格、2048 维通道。增量更像在调语义向量场：拉开类间、压背景、为分类头对齐方向。经验上后面几块的 $F$ 不必很大——「保留已有语义 + 微调」常常够用。这是统计偏好，不是「深层只学物体、浅层只学边」的硬分区；通道是混杂的，概念跨多层。
-
-把分辨率和语义放在同一条轴上：
-
-```text
-fine grid, appearance          coarse grid, class semantics
-     │                                    │
-  layer1 @56          layer2@28 / layer3@14         layer4@7
-  Δ: edges / texture  Δ: parts + scale change       Δ: class-related refine
-  identity often cheap   stage door = projection     often smaller F
-```
-
-深度在 ResNet 里同时是两件事：抽象级别（边 → 部件 → 物体），以及 residual 的修正级别（在哪张网格上、改多大的 $\Delta$）。可迁移性通常随深度递减：浅层换数据集仍好用，深层更贴原任务的类空间——这是「冻浅层、只训 head」的背景，不是另一套理论。
-
-### 8.4 分类头看见谁，看不见谁
-
-```text
-layer4 [N, 2048, 7, 7]
-    → AdaptiveAvgPool → [N, 2048, 1, 1]
-    → flatten          → [N, 2048]
-    → fc Linear(2048, 1000)
-```
-
-`fc` 只吃 layer4 经 GAP 后的 2048 维向量。它不能直接读 stem 的 `[N,64,112,112]`，也没有一条从 `conv1` 拉到分类头的 skip。早期信息可以**影响**最终向量——前向一路算过来，stage 内 residual 还让部分路径更短——但早期 feature 并没有**原样归档**给分类器。那是 DenseNet / U-Net / FPN 的契约。
-
-| 说法 | 对吗 |
-|------|------|
-| fc 的输入 = stem conv1 输出 | 否，输入是 layer4 的 2048-d |
-| 早期信息可以影响最终向量 | 是，沿计算图传播 |
-| 早期 feature 原样保留给 fc | 否；跨 stage 有 projection、降采样、多次 $F$ |
-| 分类头是多层 MLP | 标准是一层 Linear |
-
-### 8.5 和手写代码的对应
-
-| 概念 | `resnet50/resnet_50.py` |
-|------|-------------------------|
-| Bottleneck | 类 `Bottleneck`：`conv1/2/3` + `downsample` + `out += identity` |
-| Post-activation | `out += identity` 之后 `self.relu(out)` |
-| 真 identity | `downsample is None` 时 `identity = x` |
-| Projection | `_make_layer` 里 `conv1x1 + BN` 赋给 `downsample` |
-| 16 个 block | `resnet50()` → `[3,4,6,3]` |
-| 起步靠近 $F\approx 0$ | `zero_init_residual` 把每个 `bn3.weight` 置零 |
-| 分类头 | `self.fc = nn.Linear(2048, num_classes)` |
-
-### 8.6 都叫 skip，契约可以完全不同
-
-Residual 让「在同一尺度上加 $\Delta$」变得可训之后，人们用同一种直觉去做了别的融合。名字都叫 skip，问的问题不是一个。
-
-| 结构 | 融合 | 在干什么 |
-|------|------|----------|
-| ResNet | 同尺度 addition | 学 $\Delta$，让 identity 廉价 |
-| DenseNet | concatenation | 把旧 feature 原样留下，channels 增长 |
-| U-Net / FPN skip | 跨尺度 concat 或 fuse | 把 encoder 的高分辨率细节送给 decoder |
-
-```text
-ResNet:   h + F(h)               same-grid correction
-DenseNet: concat(old, new)       keep old channels; width grows
-U-Net:    encoder detail ──► decoder    recover spatial detail
-```
-
-分类 ResNet 的深层**不会**把浅层细节原样交给 `fc`。你若要像素级边界，必须另拉一条跨尺度的线。不要因为都会画一道弧，就把优化旁路和细节回放当成同一设计。
-
-走完这条高速公路，深度不再是 plain net 里那个一加深就训崩的东西。可以叠了。叠起来的每一块，信息还是按**预先规定的位置关系**流动：卷积看邻域，shortcut 看同一像素。若下一个问题是「这个 token 该读哪一个 token」，残差帮你把 block 堆高，却没有替你决定路由。
+深度现在可以叠了。叠起来的每一块，信息仍按预先规定的位置流动：卷积看邻域，shortcut 看同一像素。若下一个问题是「这个 token 该读哪一个 token」，残差帮你把 block 堆高，却没有替你决定路由。
 
 ---
 

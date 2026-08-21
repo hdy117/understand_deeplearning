@@ -359,74 +359,17 @@ Mode collapse 被单独拿出来喊，是因为它最能骗过眼睛：高 fidel
 
 若模型定义了 \(p_\theta(x)\)，最老实的问题是：没见过的真实数据，模型还认不认？
 
-对 test set：
-
 \[
 \log p_\theta(D_{\mathrm{test}})
 =
 \sum_i \log p_\theta(x_i).
 \]
 
-数字越大，模型给这些未见过的真实点的 density 越高。
+第 8 章已经讲过：训练集上的成绩可以是记忆。Likelihood 同样如此。模型可以在每个训练点上插一根极细极高的针，点与点之间几乎不给 probability。Test likelihood 不看模型造出来的图，它问真实的未见过的点还认不认。归一化会同时施压 coverage：只给一个角落很高的密度，别处必须更低，一部分 test 点就会很难看。抽出来的图好不好看，这把尺子根本没检查。
 
-### 5.1 为什么不能看 train likelihood？
+高维 standard Gaussian 把「高 density \(\neq\) 典型样本」钉死。原点 \(x=0\) 的 point density 最高，但 \(\mathbb E\|X\|^2=d\)，典型样本贴在半径约 \(\sqrt{d}\) 的薄壳上。维度越高，壳越薄，原点越不典型。图像里背景统计和局部纹理会在大量维上累积：给对了 background statistics，test likelihood 可以很好，人眼仍觉得糊。反过来，GAN 可以很锐，却没有可比较的 \(\log p(x)\)。
 
-第 8 章已经讲过：训练集上的成绩可以是记忆。Likelihood 同样如此。模型可以在每个训练点上插一根极细极高的针，点与点之间几乎不给 probability。Train likelihood 会高得吓人，但它只会复读训练数据，不能生成新的合理样本，也不能给新的真实点打高分。
-
-Test likelihood 并不去看模型造出来的图。它问的是另一件事：真实的、没见过的点，模型还认不认。这同时压两头：
-
-1. unseen real samples 要有较高 density——真的点不该被模型当成离谱；
-2. 不能把概率只堆在训练分布的一个角落——归一化会强迫你为其余 test modes 留出质量。
-
-第二点就是 coverage 压力，而且它不是附加彩蛋，是归一化送出来的：若模型只给子集很高概率，别处必须更低，于是一部分 test examples 会很难看。至于“从模型里抽出来的图好不好看”，likelihood 根本没检查；下一小节的高维 Gaussian 会把这一点说得更狠。
-
-### 5.2 一个反直觉：最高 density 的点，不一定像“典型样本”
-
-考虑高维 standard Gaussian：
-
-\[
-X\sim\mathcal N(0,I_d).
-\]
-
-原点 \(x=0\) 的 **point density 最高**。但随机 sample 的平方半径满足：
-
-\[
-\mathbb E\|X\|^2 = d,
-\]
-
-所以典型 samples 往往出现在半径约 \(\sqrt{d}\) 的薄壳附近，而不是挤在原点。维度越高，壳越薄，原点反而越不典型。
-
-```text
-1D：mode 和 typical samples 差不多都在 0 附近
-
-High-d：
-        最高 density 在原点
-        但几乎全部 probability mass
-        贴在半径 ≈ √d 的球壳上
-```
-
-这区分了两个问题：
-
-```text
-哪里单点 density 最大？
-        vs
-distribution 的大部分 mass 集中在哪里？
-```
-
-图像这种高维对象里，背景统计、局部纹理、压缩编码的许多小差异会在大量 dimensions 上累积。于是：
-
-> **Likelihood 检查的是概率模型有没有把质量放对地方；视觉质量检查的是人类感知。二者相关，但不是同一个问题。**
-
-一个给了正确 background statistics 的模型，test likelihood 可以很好，人眼仍觉得“这脸很糊、这纹理很脏”。反过来，GAN 可以造出很锐的图，却没有一个可比较的 \(\log p(x)\)。
-
-### 5.3 这把尺子的边界
-
-1. GAN 没有直接可算的 likelihood，整把尺子拿不起来；
-2. VAE / Diffusion 的 exact likelihood 常不可 tractable，只能估计或使用 lower bound，跨论文比数字时要看估的是什么；
-3. 高维空间中 likelihood 高不一定等于人类感知质量高；
-4. 不同 preprocessing、dequantization、数据单位会改变 continuous density 的数值，跨论文比较必须先对齐测量约定。
-
-Likelihood 是概率生成模型的第一公民 metric。它回答不了的两件事——没有 \(p(x)\) 的模型怎么评、以及“人看着好不好”——把下一把尺子逼了出来。
+GAN 整把尺子拿不起来。VAE / Diffusion 常常只能报 bound。连续 density 的数字还依赖 preprocessing 和 dequantization，跨论文必须先对齐测量约定。Likelihood 够不着的两件事——没有 \(p(x)\) 的模型、以及人看着好不好——逼出下一把尺子。
 
 ---
 
@@ -690,31 +633,7 @@ gradually denoise ε → x              （reverse，才是模型）
 
 ---
 
-## 11. 几个已经在文中出现、但仍容易黏住的边界
-
-下面不再引入新概念，只把已经走过的切口再对一次。读的时候若发现某一对又黏成了一个词，回到对应那一节，不要在这里另学一套定义。
-
-**Unsupervised vs self-supervised。**  
-没有人工标签，不等于没有 training target。Self-supervised 从数据构造目标，训练形式像 supervised；广义上仍是无人工标签学习。
-
-**Generative vs probabilistic。**  
-能生成样本，不等于能给样本计算 probability。GAN 是前一个“是”、后一个“通常不是”的标准例子。
-
-**Probability vs density。**  
-连续变量的 \(p(x)\) 是 density，可以大于 1；真正 probability 是对区域积分。比较 likelihood 必须固定测量约定。
-
-**Reconstruction vs generation。**  
-Encode 再 decode 是 reconstruction；从 prior 抽 \(z\) 再 decode 才是 generation。重构好，只说明 decoder 见过的 \(z\) 区域是通的。
-
-**Latent vs compressed。**  
-Latent 说“未观测”。VAE 的 \(z\) 常常压缩；Flow 的 \(z\) 常常同维；Diffusion 的 \(z_t\) 常常是同 shape 噪声图。
-
-**Fidelity vs coverage。**  
-一张好看的图只支持前者。Mode collapse 是前者高、后者低。
-
----
-
-## 12. 自测
+## 11. 自测
 
 1. Unsupervised、generative、probabilistic generative 分别回答什么问题？为什么不是套娃？  
 2. 为什么 k-means 是 unsupervised，却通常不算强 generative model？  
@@ -733,7 +652,7 @@ Latent 说“未观测”。VAE 的 \(z\) 常常压缩；Flow 的 \(z\) 常常�
 
 ---
 
-## 13. 合上书再看一眼
+## 12. 合上书再看一眼
 
 无监督学习只给你 \(\{x_i\}\)。模型必须自己决定哪些结构值得压缩、聚类或建模；没有人用 \(y\) 把重要性标好。
 

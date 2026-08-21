@@ -620,19 +620,7 @@ Offline RL 也不等于 imitation：imitation 主要复制动作，未必用 rew
 
 ---
 
-## 14. 贯穿始终的几组对打
-
-Immediate vs delayed：\(\gamma\) 大则看长，value 更难估。  
-Exploration vs exploitation：信息要用 reward 或安全去换。  
-Bias vs variance：MC 用真实采样回报，方差高；TD bootstrap 方差较低，估计不准时 target 有偏。满足条件的表格 TD 仍可收敛，不是永久偏差。  
-Value-based vs policy-based：Q-learning 适合离散动作；policy gradient 直接对付随机 / 连续动作，方差高；actor–critic 绑在一起。  
-Online vs offline：能探索则能补 coverage；只能看历史，则没做过的动作没有 identifiability。
-
-这些对打没有统一最优解。和第 14 章一样：先问自己在哪一条轴上，再决定该信哪一个算法。
-
----
-
-## 15. 自测
+## 14. 自测
 
 1. 为什么 RL 不能看成固定数据集上的监督学习？Policy 改变了什么？  
 2. 稀疏 reward、temporal credit assignment、环境随机、探索–利用，各对应企鹅 / 下棋的哪件事？  
@@ -655,7 +643,7 @@ Online vs offline：能探索则能补 coverage；只能看历史，则没做过
 
 ---
 
-## 16. 合上书再看一眼
+## 15. 合上书再看一眼
 
 RL 是一个 agent–environment 闭环。Agent 选动作，动作改写下一格、下一份奖励，以及下一批评训数据。一步 reward 不够，目标是长期贴现回报；value 是这份回报的期望；Bellman 只是把期望按“现在 + 打折的下一步”拆开。
 
