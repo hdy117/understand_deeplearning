@@ -357,39 +357,102 @@ Mode collapse 被单独拿出来喊，是因为它最能骗过眼睛：高 fidel
 
 ## 5. 第一把尺子：Test Likelihood
 
-若模型定义了 \(p_\theta(x)\)，最老实的问题是：没见过的真实数据，模型还认不认？
+先从最完整的情况开始。假设模型定义了一个归一化的 \(p_\theta(x)\)，我们就能拿一批**训练时没见过的真实样本**来问：模型是否把概率放在了正确的地方？这批样本记作
+
+\[
+D_{\mathrm{test}}=\{x_1,x_2,\ldots,x_N\}.
+\]
+
+其中，\(D_{\mathrm{test}}\) 是整个 test set，\(x_i\) 是其中第 \(i\) 个样本，\(N\) 是样本总数。\(\theta\) 表示模型学到的参数，\(p_\theta(x_i)\) 则表示参数固定为 \(\theta\) 时，模型在样本 \(x_i\) 处给出的 probability density（离散数据时就是 probability）。
+
+如果暂时假设各个 test samples 是独立抽到的，那么模型赋给整批数据的 likelihood 是各样本 likelihood 的乘积：
+
+\[
+p_\theta(D_{\mathrm{test}})
+=
+\prod_{i=1}^{N}p_\theta(x_i).
+\]
+
+这个式子可以直接读成：
+
+```text
+模型对整批测试数据的认可程度
+        =
+模型对每个测试样本认可程度的连乘
+```
+
+只要模型很不认可其中一部分真实样本，对应的 \(p_\theta(x_i)\) 很小，整个乘积就会被拉低。
+
+实际计算不喜欢连乘。大量小数相乘容易发生 numerical underflow，乘法也不如加法方便处理。因此对两边取 logarithm，利用
+
+\[
+\log(ab)=\log a+\log b,
+\]
+
+就得到通常报告的 test log-likelihood：
 
 \[
 \log p_\theta(D_{\mathrm{test}})
 =
-\sum_i \log p_\theta(x_i).
+\sum_{i=1}^{N}\log p_\theta(x_i).
 \]
 
-第 8 章已经讲过：训练集上的成绩可以是记忆。Likelihood 同样如此。模型可以在每个训练点上插一根极细极高的针，点与点之间几乎不给 probability。Test likelihood 不看模型造出来的图，它问真实的未见过的点还认不认。归一化会同时施压 coverage：只给一个角落很高的密度，别处必须更低，一部分 test 点就会很难看。抽出来的图好不好看，这把尺子根本没检查。
+符号 \(\sum\) 表示把每个样本的 log-likelihood 加起来，\(\log\) 只是把连乘变成连加，并没有改变模型之间的优劣顺序。这个总和越大，说明模型整体上越认可这些 test samples。训练时常见的 negative log-likelihood（NLL）只是再加一个负号：
 
-高维 standard Gaussian 把「高 density \(\neq\) 典型样本」钉死。原点 \(x=0\) 的 point density 最高，但 \(\mathbb E\|X\|^2=d\)，典型样本贴在半径约 \(\sqrt{d}\) 的薄壳上。维度越高，壳越薄，原点越不典型。图像里背景统计和局部纹理会在大量维上累积：给对了 background statistics，test likelihood 可以很好，人眼仍觉得糊。反过来，GAN 可以很锐，却没有可比较的 \(\log p(x)\)。
+\[
+\operatorname{NLL}(D_{\mathrm{test}})
+=
+-\sum_{i=1}^{N}\log p_\theta(x_i).
+\]
 
-GAN 整把尺子拿不起来。VAE / Diffusion 常常只能报 bound。连续 density 的数字还依赖 preprocessing 和 dequantization，跨论文必须先对齐测量约定。Likelihood 够不着的两件事——没有 \(p(x)\) 的模型、以及人看着好不好——逼出下一把尺子。
+因此 log-likelihood 是越大越好，NLL 是越小越好；它们衡量的是同一件事。
+
+这里的关键词是 test。若只看 train likelihood，模型可能记住训练集，在每个训练点附近堆出很高的 density，点与点之间却是一片空白。换成没见过的 \(D_{\mathrm{test}}\)，才是在检查模型有没有学到能够泛化的数据规律。这和第 8 章的教训完全相同：训练集上的高分不能证明模型理解了总体分布。
+
+为什么 likelihood 多少能检查 coverage？因为 \(p_\theta\) 必须归一化。模型把概率过多地塞进“年轻人正脸”这个小角落，就没有足够的概率留给老年人、侧脸和其他真实模式；这些 test samples 的 log-likelihood 会下降。它因此能检查模型是否认得真实数据，但仍然没有回答“生成的图看起来是否自然”。
+
+这里还藏着一个容易误解的地方：**高 density 不等于典型 sample**。设
+
+\[
+X\sim\mathcal N(0,I_d),
+\]
+
+符号 \(\sim\) 表示“服从某个分布”，\(\mathcal N\) 表示 Gaussian distribution，\(0\) 是均值向量，\(I_d\) 是 \(d\) 维 identity matrix，表示各坐标方差均为 1 且彼此独立。换句话说，我们从 \(d\) 维 standard Gaussian 中随机抽一个向量 \(X=(X_1,\ldots,X_d)\)。符号 \(\mathbb E\) 表示对大量随机抽样取平均，\(\|X\|\) 表示 \(X\) 到原点的 Euclidean distance。因为
+
+\[
+\|X\|^2=X_1^2+X_2^2+\cdots+X_d^2,
+\qquad
+\mathbb E\|X\|^2=d,
+\]
+
+每个坐标都有 \(\mathbb E[X_j^2]=1\)，\(d\) 个坐标相加后，平均平方距离便是 \(d\)。而且高维时 \(\|X\|^2\) 会集中在 \(d\) 附近，所以典型样本到原点的距离大约是 \(\sqrt d\)。然而 Gaussian 的 point density 在原点 \(X=0\) 处最高。大多数样本因此集中在半径约为 \(\sqrt d\) 的薄壳附近，而不是集中在 density 最高的原点：
+
+```text
+point density 最高：        原点
+随机抽样最常落到：          半径约 √d 的薄壳
+```
+
+图像模型中也会出现类似的错位。模型可能把背景统计和局部纹理学得很好，因此 test likelihood 很高，但生成图在人眼看来仍然模糊。反过来，GAN 可以生成很锐利的图片，却根本没有可计算的 \(p(x)\)。
+
+因此，test likelihood 回答的是：“模型给没见过的真实数据分配了多少 density？”它不能单独回答“随机生成的图片在人眼看来是否自然”。这就是第一道缺口：likelihood 只适用于有概率语义的模型，而且概率评价与感知质量不是一回事。我们还需要一把不要求显式 \(p(x)\)、直接从生成图判断“像不像”的尺子。下一节的 IS 就是这个方向的早期尝试。
 
 ---
 
-## 6. Likelihood 够不着感知：Inception Score
+## 6. 没有 likelihood，先借一双分类器的眼睛：Inception Score
 
-Inception Score（IS）专为图像设计，而且最自然的适用场景是 ImageNet 这类有 1000 类物体的生成。它的思想是：既然人眼评价贵、不稳定，就借用一个已经训好的 image classifier，当廉价的感知探针。
+上一节留下两个现实问题：典型 GAN 没有可计算的 \(p(x)\)，而 likelihood 也不等于人眼观感。对图像来说，一个自然的替代方案是找一个已经训练好的 image classifier，请它充当感知探针。它不直接告诉我们真实分布是什么，只判断生成图是否像一个明确、合理的对象。
 
-探针只看生成图，不问真实图。它希望同时满足两件事。
+IS 只看 generated set，不看 real set。它要求生成结果同时满足两件事：
 
-**单张图要明确。** Classifier 对生成图 \(x\) 的类别分布 \(p(y\mid x)\) 应该尖：这张图看起来就是一只明确的狗，而不是“可能是狗、也可能是沙发”。
+1. 对单张图，classifier 的 \(p(y\mid x)\) 要尖。比如图中确实是一只狗，而不是狗、沙发、汽车各有一点概率。
+2. 对整批图，预测类别要分散。不能所有样本都被判成狗。
 
-**整组图要多样。** 把所有生成图的类别分布平均起来：
-
+令
 \[
-p(y)=\frac1N\sum_{i=1}^N p(y\mid x_i)
+p(y)=\frac1N\sum_{i=1}^N p(y\mid x_i),
 \]
 
-应该比较平：整个 generated set 不能全是狗。
-
-IS 用这两条分布的 KL divergence 来同时奖励它们：
+IS 用两者的 KL divergence 衡量“单张明确”与“全体多样”之间的差异：
 
 \[
 \boxed{
@@ -404,100 +467,60 @@ D_{KL}\bigl(p(y\mid x)\,\Vert\,p(y)\bigr)
 }
 \]
 
-为什么这个式子恰好卡在“单张明确、全体多样”上？把 KL 展开：
+直觉很简单。若每张图都被 classifier 认得很确定，但所有图都是同一类，那么 \(p(y\mid x)\) 很尖，\(p(y)\) 也集中在同一类，两者并不“不同”，KL 反而小。若每张图都很明确，同时整批样本均匀使用多个类别，KL 才会大。
 
-\[
-D_{KL}\bigl(p(y\mid x)\,\|\,p(y)\bigr)
-=
-\sum_y p(y\mid x)\log\frac{p(y\mid x)}{p(y)}.
-\]
+但 IS 的补丁也带来了新的盲区。它没有看真实图，所以生成器即使整体偏离真实数据，只要能骗过 classifier，分数仍可能不错；它还依赖 classifier 的 label space，拿 ImageNet classifier 去评人脸或医学图像，本来就不太合适。更隐蔽的是，某个 class 只生成一个固定模板，也足以拿到不错的分数。IS 奖励的是类间多样，不奖励 class 内部的变化。
 
-若单张图非常明确，\(p(y\mid x)\) 近似是类别 \(c\) 上的尖峰，则
-
-\[
-D_{KL}
-\approx
-\log\frac{1}{p(y=c)}.
-\]
-
-于是：
-
-- 若全体都在狂造同一类，\(p(y=c)\approx 1\)，KL \(\approx 0\)，IS 低——多样失败；
-- 若单张图本身就含糊，\(p(y\mid x)\) 接近平均后的 \(p(y)\)，KL 同样接近 0——明确失败；
-- 若每张都自信，且各类被均匀用到，\(p(y=c)\approx 1/K\)，KL 大约是 \(\log K\)，IS 高。
-
-这把尺子的盲区几乎都来自“它从不看真实图像”：
-
-- 强依赖所用 classifier；换一个网络，数字可以跳；
-- 最适合与 classifier 的 label space 相符的数据，拿去评人脸、医学图、分子图都会文不对题；
-- 不直接比较 generated data 与 real data，模型可以整体偏移真实分布，只要类别探针仍被骗；
-- **每个 class 只生成一个模板，也可能拿到高分**：类间多样已经满足，类内多样完全不奖励。
-
-最后一条说明：IS 不是 coverage 的好尺子。它最多逼你覆盖 **class 这个粗糙的 mode 定义**，而且每个 class 一个样板就够了。要跟真实数据比“两朵云像不像”，需要下一把尺子。
+所以 IS 解决的是“生成集自己看起来是否明确且有类别变化”，并没有真正回答“它和真实数据像不像”。下一步必须把 real set 也放进比较中，这就引出 FID。
 
 ---
 
-## 7. IS 还不看真实数据：FID 去比较两朵云
+## 7. IS 还不看真实数据：FID 把两批样本放到同一张地图
 
-Fréchet Inception Distance（FID）承认一件 IS 不承认的事：生成质量是 **generated set 相对 real set** 的性质，不是 generated set 自己对自己打分。
+IS 的问题不是“算得不够复杂”，而是它根本没有看 real set。它只检查生成图能不能骗过一个 classifier，却不知道真实数据长什么样。于是下一步的思路很直接：同一批 real images 和 generated images 都送进一个预训练网络，在同一个 feature space 里比较两朵云。
 
-但直接在 raw pixels 里比较两朵云会失败。像素空间的距离和人类感知对不上：把一只猫平移一个 pixel，L2 可以很大，人却觉得还是同一只猫。所以 FID 先把 real / generated images 送进预训练 Inception network，取出深层 features——那些更靠近“这是什么物体”的激活——再在 feature space 里比较。
+不能直接比较 raw pixels。猫平移一个 pixel，像素 L2 距离可能很大，人却仍把它看成同一只猫。FID 借用 Inception network 的中间 feature，假定这些 feature 比像素更接近语义相似度。
 
-高维 feature 的完整分布仍然很难估。FID 退一步，只把两朵云近似成 Gaussian：
-
+高维 feature 的完整分布仍然很难估。FID 退一步，只保留每朵云的均值和协方差，把它们近似成
 \[
 \mathcal N(\mu_r,\Sigma_r),
 \qquad
 \mathcal N(\mu_g,\Sigma_g).
 \]
 
-然后算这两个 Gaussian 之间的 Fréchet distance（二维以上常被说成 2-Wasserstein：把一朵 Gaussian 云搬成另一朵要花多少功夫）：
+然后计算两个 Gaussian 之间的 Fréchet distance：
 
 \[
 \boxed{
 \|\mu_r-\mu_g\|^2
 +
 \operatorname{Tr}\left(
-\Sigma_r+\Sigma_g
+\Sigma_r+
+\Sigma_g
 -2\bigl(\Sigma_r^{1/2}\Sigma_g\Sigma_r^{1/2}\bigr)^{1/2}
 \right).
 }
 \]
 
-越小越好。两项各管一件事：
+越小越好。均值项看两朵云的中心是否偏移，协方差项看云的形状和张开程度是否相近。因此 FID 比 IS 更像是在比较 \(p_{data}\) 和 \(p_\theta\)，但它比较的其实是 feature space 中两个 Gaussian 的摘要，不是原始分布本身。
 
-```text
-‖μr − μg‖²          两朵云的中心是否重合？
-                     （平均语义是否一样）
+这也解释了它的局限：真实 feature 云可能是多峰的，均值和协方差会漏掉死角；结果依赖 Inception feature extractor，网络忽略的细节不会进入分数；有限样本还会带来估计偏差。最关键的是，FID 只有一个数。中心偏了、云变瘪了、生成了许多不真实的点，都可能让 FID 变差，但它不会告诉你是哪一种失败。
 
-Trace 项             两朵云的形状 / 张开程度是否一样？
-                     （多样性、协方差结构是否一样）
-```
-
-所以 FID 同时对“生成图整体偏了”和“生成图多样性不够”敏感。这比 IS 更接近我们真正想比的 \(p_\theta\) vs \(p_{data}\)，只是比较发生在 classifier feature 里，并且只用了均值和协方差。
-
-局限同样来自这些近似：
-
-- 真实 feature 云往往不是 Gaussian，只匹配均值协方差会漏掉多峰、死角；
-- 依赖 feature extractor；网络丢掉的信息——细纹理、精确空间布局——不进 metric；
-- finite sample 下 FID 有估计偏差，生成 2048 张和 5 万张，数字不可直接比；
-- **一个标量无法告诉你失败来自 fidelity 还是 coverage**。云的中心偏了、云瘪了，都会把 FID 变差。
-
-IS 的缺口是“不看真实数据”。FID 补上了，却把上一节最在意的那两维又揉回一个数。于是需要一把故意把两维拆开的尺子。
+IS 补的是“没有 real set”，FID 补上后又把 fidelity 和 coverage 压成了一个距离。下一节干脆把这两个问题拆开。
 
 ---
 
-## 8. FID 分不清两种失败：Manifold Precision / Recall
+## 8. FID 只有一个数：把 fidelity 和 coverage 拆开
 
-FID 已经把 generated set 和 real set 放在一起比了，却仍把第 4 节的两问揉成一个距离。Manifold precision / recall 的动机就是把它们拆开，不再求和成一个分数。
+FID 已经同时看了 real set 和 generated set，但它把两种失败揉成了一个距离。实际调模型时，这不够用：我们得知道问题是“生成了很多假样本”，还是“只覆盖了真实数据的一小块”。Manifold precision / recall 就是为这个诊断设计的。
 
-把真实样本所在的区域叫 data manifold，把生成样本所在的区域叫 model manifold。则：
+把 feature space 中真实样本占据的区域记作 data manifold，把生成样本占据的区域记作 model manifold。于是：
 
 \[
 \text{Precision}
 =
 \frac{\text{落在 data manifold 内的 generated samples}}
-{\text{全部 generated samples}}.
+{\text{全部 generated samples}},
 \]
 
 \[
@@ -507,64 +530,45 @@ FID 已经把 generated set 和 real set 放在一起比了，却仍把第 4 节
 {\text{全部 real samples}}.
 \]
 
-Precision 高：生成出来的东西大多真实。  
-Recall 高：真实数据的模式大多能被模型造出来。
+Precision 问：“我生成的东西，大多数像不像真的？”它接近 fidelity。Recall 问：“真实数据的各种模式，我覆盖了多少？”它接近 coverage。
 
-一个数字例子。100 个生成样本里有 80 个落在 real manifold 上，precision \(=0.8\)。100 个真实样本里只有 60 个被 generated manifold 覆盖，recall \(=0.6\)。诊断立刻比 FID 清楚：
+例如，100 个 generated samples 里有 80 个落在 real manifold 内，precision 是 \(0.8\)；100 个 real samples 里只有 40 个被 model manifold 覆盖，recall 是 \(0.4\)。这不是一句“FID 不够低”能说明的，而是一个很具体的处方：样本多数还算真实，但生成分布太窄，需要优先补 coverage，而不是继续只优化单张图的锐度。
 
-> 样本多数较真实，但 coverage 明显不足。
+当然，manifold 通常没有解析式。实践中会在 feature space 里用 k-nearest-neighbor 的邻域近似它：每个样本周围画一个球，半径取到第 \(k\) 个邻居的距离，把这些球的并看成该类样本的区域。生成点落进 real balls，算作 precision；真实点落进 generated balls，算作 recall。
 
-真正的麻烦是：我们没有解析的 manifold。实践中在 feature space 里用 k-nearest-neighbor hyperspheres 去近似——每个样本周围画一个球，半径等于到第 \(k\) 个邻居的距离，所有球的并当成“这块区域属于该类数据”：
-
-```text
-Real examples:     o  o    o
-                   ╲  |    ╱     ← kNN balls
-                    ╲ |  ╱
-Generated point:      ×          inside → counts as realistic
-```
-
-这仍然依赖 representation 和邻域定义。\(k\) 太小，manifold 碎成孤岛，precision 会虚低；\(k\) 太大，球并在一起把空隙也算进去，假图会被算成真实。它把 fidelity / coverage 拆开了，但“拆开”本身建立在一个近似几何上。
+这个近似也不能忘。\(k\) 太小，区域碎成孤岛，precision / recall 可能被低估；\(k\) 太大，球会吞掉空隙，把不真实的点也算进去。换 feature extractor 或换邻域规则，结果也会变化。Precision / recall 不是终于找到“真理”，只是比一个 FID 标量更适合定位失败类型。
 
 ---
 
-## 9. 所以没有一个 Metric 够用
+## 9. 四把尺子不是排行榜，而是一轮排查
 
-把四把尺子按“它补上了谁的缺口”排成一条链：
+现在可以把四个 metric 串成一次实际诊断，而不是背四段定义。先问模型有没有概率语义：有的话，用 test likelihood 检查它是否认得没见过的真实样本；没有的话，likelihood 这一关就跳过。接着看生成样本本身，IS 可以检查单张图是否明确、生成集是否跨越多个 classifier classes，但它不看 real set，所以只能当初筛。
 
-```text
-需要给概率模型打分
-        → Test likelihood
-            缺口：GAN 没有 p(x)；高 density ≠ 好看
-        → Inception Score（用分类器当感知探针）
-            缺口：只看生成集，不看真实数据；不奖类内多样
-        → FID（两朵 feature 云的距离）
-            缺口：真实性和覆盖率揉成一个数
-        → Manifold precision / recall
-            缺口：manifold 是估的，仍依赖 feature
-```
-
-| Metric | 主要照亮什么 | 主要盲区 |
-|--------|--------------|----------|
-| Test likelihood | 概率模型对 unseen data 的 density，并经由归一化施压 coverage | 感知质量未必一致；部分模型不可精确算 |
-| IS | 单图明确 + 类别多样 | 不与 real set 直接比较，忽略 class 内多样性 |
-| FID | real / generated feature 分布有多近 | 不区分 fidelity / coverage，依赖 extractor 与 Gaussian 近似 |
-| Precision / Recall | 把真实性与覆盖率拆开 | manifold 估计近似，依赖 representation 和 \(k\) |
-| Human evaluation | 感知质量与偏好 | 昂贵、主观、难复现 |
-
-推荐的不是另找一把“真正正确”的尺子，而是让几把尺子互相揭短：
+如果想知道生成集和真实集是否整体接近，用 FID 把两批样本放进同一 feature space。不过 FID 仍然只给一个总分，不能说明是样本不真实，还是模式覆盖不足。遇到这种情况，再看 precision / recall：
 
 ```text
-Sample grid                          → 看 fidelity，几乎不看 coverage
-+ nearest-neighbor / memorization    → 是不是在复读训练集
-+ FID 或 domain feature distance     → 两朵云整体像不像
-+ precision / recall                 → 失败来自假图还是漏模式
-+ likelihood 或 bound（若可用）      → 概率模型本身
-+ task-specific evaluation           → 下游真正在乎的事
+有 pθ(x)？
+   ├─ 是 → test likelihood：模型认得 unseen real samples 吗？
+   └─ 否 → 跳过这关，不能拿不存在的 p(x) 硬算
+
+所有模型都可以继续看：
+   ├─ sample grid / nearest neighbors：图像是否真实，是否复读训练集？
+   ├─ IS：生成集内部是否明确且有类别变化？
+   ├─ FID：生成集与真实集的 feature 云整体接近吗？
+   └─ precision / recall：失败主要是 fidelity 还是 coverage？
 ```
 
-评价生成模型，和评价分类器不同。分类器往往有一个对的 label；生成器面对的是一整个未知分布 \(p_{data}\)，任何标量都只是这个分布的一个投影。
+| Metric | 它主要回答什么 | 它回答不了什么 |
+|--------|----------------|----------------|
+| Test likelihood | 模型对 unseen real data 的 density 是否合理 | 人眼是否喜欢；没有 \(p(x)\) 的模型无法直接用 |
+| IS | 单张图是否明确、生成集是否跨多个类别 | 是否贴近 real set；class 内部是否多样 |
+| FID | real / generated 两朵 feature 云整体有多近 | 失败究竟来自 fidelity 还是 coverage |
+| Precision / Recall | 生成样本是否真实、真实模式是否被覆盖 | manifold 只能近似；结果依赖 feature 和邻域选择 |
+| Human evaluation | 人的观感和偏好 | 成本、主观性、复现性 |
 
-有了这组轴和这组尺子，就可以看后面四章各自押哪一边。
+因此评价一个 generator，至少要把“看图”“看邻居”“看两朵云”“看覆盖方向”分开。若模型有概率语义，再补 likelihood 或它的 bound；若模型用于医学、编辑或下游分类，还要加 domain-specific task evaluation。没有一把 metric 能把一个未知高维分布压缩成无损的单个数字，每个分数都只是从某个角度投影出来的影子。
+
+这套排查顺序也正好把后面四章接起来：GAN 可能绕过 likelihood，却在 sample quality 上很强；Flow 能给出 exact likelihood，却受可逆结构限制；VAE 用 ELBO 换取可训练的 latent 概率模型；Diffusion 用多步去噪换质量和稳定性。接下来比较模型时，先问它在哪一关下注，再问它在哪一关付出了代价。
 
 ---
 

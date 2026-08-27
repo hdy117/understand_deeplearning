@@ -565,7 +565,233 @@ padding_mask = token_ids.eq(0)
 scores = scores.masked_fill(padding_mask[:, None, None, :], float("-inf"))
 ```
 
-Mask 的最后一个维度对应**被读取的 key positions**。看见 `[B,H,N,N]` 时，前一个 \(N\) 是谁在问（query），后一个 \(N\) 是谁被读（key）。
+Mask 的最后一个维度对应**被读取的 key positions**。看见 `[B,H,N,N]` 时，前一个 `N` 是谁在问（query），后一个 `N` 是谁被读（key）。
+
+### 9.1 把一轮 attention 当成“每个位置问一遍全班”
+
+如果第一次看这段代码，先暂时忘掉 `permute`、`transpose` 和矩阵乘法。只记住一个画面：LLM 一次处理一批句子；每句话有一排 token；每个 token 当前由一个向量表示。这里的五个维度分别回答五个不同的问题：
+
+```text
+[B, N, D]
+ │  │  └── 每个 token 有多少个 feature
+ │  └───── 一句话有多少个 token
+ └──────── 一次并行处理多少句话
+```
+
+本例中：
+
+```text
+B = 2     同时处理两句话
+N = 4     每句话有 4 个 token
+D = 8     每个 token 用 8 个数字表示
+H = 2     并行使用 2 套 attention 规则
+Dh = 4    每个 head 看到 D/H = 8/2 = 4 个 feature
+```
+
+因此，进入 block 的 `x` 是 `[2,4,8]`。可以把它想成一摞表格：有 2 张表，每张表有 4 行，每行是一个 8 维 token 向量。**attention 不会把两句话混在一起**；第一个维度 `B` 只是让两张表并行计算。
+
+#### 第一步：token ID 变成 token vectors
+
+```python
+token_ids                         # [B,N] = [2,4]
+x = self.token_embedding(token_ids)       # [B,N,D] = [2,4,8]
+x = x + self.position_embedding(positions)[None, :, :]
+```
+
+`token_ids` 里的数字只是词表编号，不是可以直接做语义运算的数。例如 `5` 不是“比 `2` 更有意义”。`nn.Embedding` 用编号查表，把每个 ID 换成一个 8 维向量。所以 `[2,4]` 中的每一个数字，都变成一行 `[8]`；四个 token 组成 `[4,8]`，两句话组成 `[2,4,8]`。
+
+位置向量的 shape 是 `[N,D] = [4,8]`。加上 `[None,:,:]` 后变成 `[1,4,8]`，这个 `1` 可以广播到两个样本，于是它能和 `[2,4,8]` 相加。每个 token 最终同时携带两类信息：内容信息和位置信息。
+
+#### 第二步：同一个 `x` 投影成 Q、K、V
+
+```python
+qkv = self.qkv(x)                  # [B,N,3D] = [2,4,24]
+qkv = qkv.reshape(B, N, 3, H, Dh)  # [2,4,3,2,4]
+q, k, v = qkv.permute(2, 0, 3, 1, 4)
+                                   # each: [B,H,N,Dh] = [2,2,4,4]
+```
+
+`nn.Linear(8, 24)` 对最后一维做投影：每个 8 维 token 产生 24 个数字。这里的 24 不是新的语义维度，而是三份 `8` 拼在一起：
+
+```text
+24 = 3 × D = Q 的 8 维 + K 的 8 维 + V 的 8 维
+```
+
+接着把每份 8 维拆成两个 head、每个 head 4 维：
+
+```text
+一个 token 的 Q/K/V： [8]
+拆成两个 head：       [H,Dh] = [2,4]
+```
+
+`reshape` 只是在重新解释数字的分组；它没有进行新的学习。`permute(2,0,3,1,4)` 则把维度顺序从 `[B,N,3,H,Dh]` 换成 `[3,B,H,N,Dh]`，这样第一个维度的三个切片就正好是 `q`、`k`、`v`。最后：
+
+```text
+q, k, v: [B,H,N,Dh] = [2,2,4,4]
+```
+
+注意：这里的 `H` 不是 batch，也不是 token 数。它表示有几套独立的 matching space；每个 head 都会独立算一张 attention 表。
+
+#### 第三步：`q @ k.transpose(-2, -1)` 为什么得到 `[B,H,N,N]`
+
+先忽略 `B` 和 `H`，只看一个 head、一个句子：
+
+```text
+Q       [N,Dh] = [4,4]
+K       [N,Dh] = [4,4]
+Kᵀ      [Dh,N] = [4,4]
+Q @ Kᵀ [N,N]   = [4,4]
+```
+
+矩阵乘法的每一个格子都是一个点积：
+
+```text
+scores[i,j] = query[i] · key[j]
+```
+
+也就是：第 `i` 个位置提出的问题，和第 `j` 个位置的“可匹配标签”有多相似。这里有 4 个 query、4 个 key，所以得到 4×4 张表：
+
+```text
+                 被读取的 key position j
+             0       1       2       3
+发问的     ┌───────┬───────┬───────┬───────┐
+query i=0  │ s00   │ s01   │ s02   │ s03   │
+            ├───────┼───────┼───────┼───────┤
+       i=1  │ s10   │ s11   │ s12   │ s13   │
+            ├───────┼───────┼───────┼───────┤
+       i=2  │ s20   │ s21   │ s22   │ s23   │
+            ├───────┼───────┼───────┼───────┤
+       i=3  │ s30   │ s31   │ s32   │ s33   │
+            └───────┴───────┴───────┴───────┘
+```
+
+所以代码中的
+
+```python
+scores = (q @ k.transpose(-2, -1)) / math.sqrt(Dh)
+```
+
+并不是把两个 `[B,H,N,Dh]` 逐元素相乘。`@` 做的是最后两个维度的矩阵乘法，同时保留前面的 `B,H`：
+
+```text
+[B,H,N,Dh] @ [B,H,Dh,N] → [B,H,N,N]
+[2,2,4,4] @ [2,2,4,4]   → [2,2,4,4]
+```
+
+这里第二个 `[2,2,4,4]` 虽然 shape 数字看起来没变，但含义已经变了：它是转置后的 `K`，最后两维从 `[N,Dh]` 变成了 `[Dh,N]`。`transpose(-2,-1)` 中的 `-2` 和 `-1` 表示“倒数第二维”和“最后一维”。
+
+#### 第四步：causal attention 不是另一种乘法，而是删掉未来的边
+
+这里应读作 **causal attention**（因果 attention），不是 casual attention。自回归 LLM 预测下一个 token 时，位置 `i` 不能读取未来位置 `j > i`。因此 causal mask 是一张固定的布尔表：
+
+```text
+future = torch.triu(torch.ones(4, 4), diagonal=1)
+
+        key:  0      1      2      3
+query 0      False  True   True   True
+      1       False  False  True   True
+      2       False  False  False  True
+      3       False  False  False  False
+```
+
+`True` 的地方代表“这条边禁止存在”。代码在 softmax **之前**执行：
+
+```python
+scores = scores.masked_fill(future, float("-inf"))
+attention = scores.softmax(dim=-1)
+```
+
+为什么必须先 mask？因为 softmax 会把一行分数变成概率。如果先 softmax，再把未来位置的概率改成 0，该行剩余权重的总和就小于 1；而且没有重新归一化。把分数设为 `-inf` 后，
+
+```text
+exp(-inf) = 0
+```
+
+于是 softmax 自动给被禁止的位置分配 0，并把剩余可见位置重新归一化为总和 1。`dim=-1` 正是在最后一个 `N` 上做 softmax，也就是沿着“被读取的 key positions”做；每个 query 对所有可见 key 的权重加起来等于 1。
+
+例如某个 head 的某一行原始分数是：
+
+```text
+query position 2: [1.2, 0.4, 2.0, 5.0]
+```
+
+因果约束下位置 2 不能看位置 3，于是实际 softmax 的输入是：
+
+```text
+[1.2, 0.4, 2.0, -inf]
+```
+
+最后得到的 attention 权重形如：
+
+```text
+[较小权重, 较小权重, 最大权重, 0]
+```
+
+它仍然可以重点读取位置 2，也可以读取过去的位置 0、1，但绝不会从位置 3 偷看答案。mask 只改变哪些格子有资格参与 softmax，不改变 `QKᵀ` 的计算规则。
+
+#### 第五步：`attention @ v` 是按权重混合 payload
+
+现在 `attention` 已经不是“相似度”，而是一张路由比例表：
+
+```text
+attention: [B,H,N,N]
+v:         [B,H,N,Dh]
+```
+
+仍然只看一个句子、一个 head：
+
+```text
+A [N,N]  @  V [N,Dh]  →  context [N,Dh]
+```
+
+第 `i` 行的计算是：
+
+```text
+context[i] = A[i,0] * v[0]
+           + A[i,1] * v[1]
+           + ...
+           + A[i,N-1] * v[N-1]
+```
+
+这就是 attention 的核心：`Q` 和 `K` 决定旋钮，`V` 是被旋钮调节音量的内容。因果 mask 下，未来 value 的权重为 0，因此位置 `i` 的 `context[i]` 只由自己和过去的 values 混合而成。
+
+在代码中：
+
+```python
+context = attention @ v                 # [B,H,N,Dh]
+context = context.transpose(1, 2)       # [B,N,H,Dh]
+context = context.contiguous().reshape(B, N, D)  # [B,N,H*Dh] = [B,N,D]
+```
+
+每个 head 先得到一份 `[N,Dh]` 的结果；`transpose(1,2)` 把 token 维和 head 维换到更适合拼接的顺序；`reshape` 把 `[H,Dh]` 拼回 `[D]`。本例中 `[2,4]` 个 head 特征重新合并成 `[8]`：
+
+```text
+[B,H,N,Dh] → [B,N,H,Dh] → [B,N,H·Dh] = [B,N,D]
+[2,2,4,4] → [2,4,2,4] → [2,4,8]
+```
+
+最后 `out_proj`、residual 和 FFN 都不会改变 `[B,N,D]` 这个外形：
+
+```text
+[B,N,D] → attention output projection → [B,N,D]
+         → residual + LayerNorm       → [B,N,D]
+         → FFN: D → d_ff → D          → [B,N,D]
+         → lm_head                    → [B,N,vocab_size]
+```
+
+这里的 `lm_head` 对每个位置独立把 8 维 hidden 映射成词表中 10 个 token 的 logits，所以本例最后是 `[2,4,10]`。它表示两句话、每句话四个位置、每个位置对十个候选 token 各有一个分数；训练时再用 causal shift 让位置 `i` 的 logits 对齐目标 token `i+1`。
+
+把整轮计算压缩成一句可执行的记忆口诀：
+
+```text
+Q：我在找什么？
+K：我适不适合被找到？
+Q @ Kᵀ：每个位置对每个位置打分
+mask：未来位置没有资格参加
+softmax：把分数变成每行和为 1 的读取比例
+A @ V：按比例混合各位置真正携带的内容
+拼回 heads：把多套关系合成一个 D 维表示
+```
 
 真正训练语言模型还需要 dataset、target shift、cross-entropy、optimizer 和多层 block。这段代码只负责一件事：让你在张量上把第 2–8 节走通。Token 一直被写成 subword；下一问是：向量从图像来、或者 \(N\) 大到那张 \(N\times N\) 表放不下，同一套路由还成立吗？
 
