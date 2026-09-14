@@ -29,7 +29,7 @@ x₁, x₂, …, xₙ
 
 > **在没有人工标签时，怎样从数据里发现可压缩、可解释或可生成的结构，并且判断学到的东西是不是真的覆盖了数据？**
 
-完整调查链如下。后面每一节都只多回答这一条链上的一个缺口：
+整章可以读成一条调查链：拿走 \(y\) 之后，每一步只是回答链上的下一个缺口。把链放在这里，不是为了画目录，而是为了让你在下面每换一次话题时都能指回“我们为什么正在问这个”：
 
 ```text
 只有 {x_i}，没有人工 y
@@ -54,23 +54,21 @@ x₁, x₂, …, xₙ
 GAN / Flow / VAE / Diffusion 在同一组轴上做不同交换
 ```
 
-有一个容易一上来就黏住的误会，先拆开：
+这条链的第一个缺口最容易被一个误会挡住，所以先拆开：
 
 > **Unsupervised、generative、probabilistic 不是三个同义词，也不是严格套娃。**
 
-它们回答的是三个不同问题：训练时有没有人工标签、能不能造出新样本、能不能给样本一个 \(p(x)\)。后面四章之所以看起来像同一类东西，只是因为原书把镜头对准了“无人工标签的深度生成模型”；不是因为这三个词本来就是一件事。
+它们回答的是三个不同问题：训练时有没有人工标签、能不能造出新样本、能不能给样本一个 \(p(x)\)。这三个问题不是三档递增的难度，而是三条可以独立打勾或打叉的轴；第四轴再问要不要发明内部坐标 \(z\)。后面四章之所以看起来像同一类东西，只是因为原书把镜头对准了“无人工标签的深度生成模型”；不是因为这三个词本来就是一件事。
 
 ---
 
-## 1. 从「只有 \(x\)」出发：先分清三件不同的事
+## 1. 从「只有 \(x\)」出发：先分清四扇不同的门
 
-拿走 \(y\) 之后，模型不是突然只会做一件事。它可以继续发现结构，也可以学习生成，还可以给样本写一个 \(p(x)\)。后两档对后面四章更关键：能 sample 的模型不必会打概率（典型 GAN）；会写 \(p(x)\) 的模型，还要另外问能不能高效 sample。这是能力上的差别，不是三个词的包含关系。第四个问题更是另一条轴：要不要发明内部坐标 \(z\)。
+上一节说“三个词是三根独立的轴”，这一节就把轴一根一根钉住：无标签本身只说明训练信号从哪来，不等于会生成；会生成不等于会写 \(p(x)\)；会写 \(p(x)\) 也不等于必须显式发明一个低维 \(z\)。四件事不是楼梯，是四扇可以分别开关的门。
 
 ### 1.1 发现结构：unsupervised model
 
 广义上，只要训练数据没有人工 target labels，就属于 unsupervised learning。没有 \(y\) 之后，目标可以很不一样，而且**并不自动排成一条由弱到强的梯子**：clustering 要的是“这些点该待在一起”，dimensionality reduction 要的是更短的坐标，density estimation 要的是“空间中哪里稠”，generation 要的是再造一条新样本。同一套无标签数据，可以只做其中一件，也可以几件一起做。
-
-原书后面四章都走生成这条路，所以下面只把其中两档——会不会造新样本、会不会给样本写 \(p(x)\)——按能力排成梯子。其余目标先放在“发现结构”这一层里，用 k-means 钉住。
 
 最熟的例子是 k-means。它把每个 data point 映成一个离散的 cluster assignment：
 
@@ -80,11 +78,11 @@ x \longmapsto z \in \{1,2,\ldots,K\}.
 
 这里的 \(z\) 已经是一个 latent variable：训练时没人把它当标签交上来，它是模型自己发明的“这个点属于哪一堆”。k-means 确实在学结构——哪几张脸更像一类——但它通常不会因此获得一个能画出新照片的机器。你最多能拿出某个簇的 centroid，那是平均脸，不是新样本。
 
-所以：
-
 > **没有标签，不等于会生成。Unsupervised 只声明训练信号从哪来，不声明模型具备哪种能力。**
 
 另一条容易混进来的岔路是 self-supervised learning。它同样不需要人工 \(y\)，但会从数据里**构造**一个预测目标，例如把一句话遮掉一个 token 再预测它。训练形式看起来很像监督学习，监督却不是人标的。现代语境常把它单独列出；广义上它仍落在“无人工标签”这一侧。原书后面四章不走这条路，走的是生成。
+
+把这条轴钉住后，自然想问：那“走生成”到底走的是什么？这就是下一扇门。
 
 ### 1.2 能制造类似数据：generative model
 
@@ -105,7 +103,7 @@ simple latent z          e.g. Gaussian noise
 complex sample x         e.g. a face
 ```
 
-这里的 \(z\) 先当占位符用：一个好采样的内部坐标。它为什么常常必要、它是不是压缩、两条映射方向是不是一回事，放到 1.4 和第 2 节再钉。眼下只需接受一个常见写法：先抽简单的 \(z\)，再由 \(G_\theta\) 折成复杂的 \(x\)。
+这里的 \(z\) 先当占位符用：一个好采样的内部坐标。它为什么常常必要、它是不是压缩、两条映射方向是不是一回事，暂时按下不表。眼下只需接受一个常见写法：先抽简单的 \(z\)，再由 \(G_\theta\) 折成复杂的 \(x\)。
 
 这一步比 clustering 强在哪里？生成器必须抓住**变化的因素**，而不只是决策边界或簇中心。只会把人脸和非人脸分开，画不出一张新脸；要把噪声变成脸，姿态、光照、身份这些因素总得以某种形式进到 \(G_\theta\) 里。
 
@@ -113,7 +111,7 @@ complex sample x         e.g. a face
 
 ### 1.3 还能给样本打概率：probabilistic generative model
 
-再强一档：模型不仅能抽出新的 \(x\)，还定义一个分布 \(p_\theta(x)\)。于是可以问一些 sample 本身回答不了的问题：
+若要回答 sample 自己回答不了的问题，就需要下一扇门：模型不仅能抽出新的 \(x\)，还定义一个分布 \(p_\theta(x)\)。于是可以问：
 
 - 这个样本在模型下有多大 probability / density？
 - 一段没见过的 test data，模型觉得有多像自己的数据？
@@ -160,9 +158,11 @@ complex sample x         e.g. a face
 
 连续数据上还有一个记号陷阱。图像、语音的 \(p_\theta(x)\) 通常是 **density**，不是“这个精确像素点发生的概率”。Density 可以大于 1。例如 \([0,0.1]\) 上的均匀分布，density 处处等于 10；真正的 probability 必须对一个区域积分。比较 likelihood 时，默认大家用同一套数据表示、单位和 preprocessing。把 pixel 从 \([0,255]\) 改成 \([0,1]\)，连续 density 的数值会整体换一把尺子——不是模型突然变好了。
 
+到这里，“无标签”和“能不能生成”“能不能打概率”已经分开，但它们都没有承诺模型内部一定要有一个未观测的 \(z\)。这个结构选择就是第四扇门。
+
 ### 1.4 内部要不要发明一个 \(z\)：latent variable model
 
-上面三档说的是能力：发现结构、会生成、会打概率。每一档都可以带、也可以不带内部坐标。1.2 里的 \(z\) 只是生成时最常见的那一招，不是生成的定义。
+前三扇门本身都不承诺 \(z\) 的语义：k-means 的簇编号只是离散标签，GAN 的噪声 \(z\) 只是采样入口，概率模型也可以完全不写 \(z\)。Latent variable 这一扇门单独问：模型里有没有一个训练时没被观测到的变量，并且这个变量被当作结构的一部分来使用。
 
 Latent variable 的意思很窄：训练时没有被直接观测到的变量。它**可能**表示人脸姿态、光照、身份，或语音里的说话者与内容。注意“可能”——这是建模时的愿望，不是学完以后自动交付的因果因子。
 
@@ -182,14 +182,7 @@ k-means 主要走上面那条；GAN 的 generator 主要走下面那条；VAE �
 
 > **Latent 的意思是“未观测”，不是“一定比 \(x\) 更低维”。**
 
-| 模型 | \(z\) 是什么 | 是否压缩 |
-|------|----------------|----------|
-| k-means | 离散簇编号 | 是，压成一个整数 |
-| VAE | 低维连续向量 | 通常是，这是设计目标 |
-| Normalizing Flow | 与 \(x\) 同维的 Gaussian 坐标 | 通常不是压缩，是可逆换坐标系 |
-| Diffusion | 与图像同 shape 的 noisy state | 基础形式并不做语义压缩 |
-
-原书说“latent 常常是压缩版的 \(x\)”，那是对 clustering / VAE 那一类模型的直觉。Flow 和 Diffusion 也使用 unobserved variable，但它们的 \(z\) 首先是为了让概率计算或逐步去噪变得好做，不是为了给你一个 32 维的“人脸基因”。
+同一个词在不同架构里负载完全不同：k-means 把 \(z\) 压成一个离散整数；VAE 通常把它设计成低维连续向量；Normalizing Flow 的 \(z\) 与 \(x\) 同维，本质是换一套可逆坐标；Diffusion 的 noisy state 甚至和图像同 shape。所以“latent 常常是压缩版 \(x\)”只是 clustering / VAE 那一类模型的直觉，不是定义；Flow 和 Diffusion 的 \(z\) 首先服务于概率计算或逐步去噪，不是为了给你一个 32 维的“人脸基因”。
 
 最后，不是所有 probabilistic generator 都必须显式使用一个低维 \(z\)。Transformer decoder 就是重要反例：它用
 
@@ -201,7 +194,7 @@ p(x)=\prod_t p(x_t\mid x_{<t})
 
 ### 1.5 四个词钉在四条轴上，不是套娃集合
 
-把上一节的例子摊开，套娃立刻破掉：
+把四个问题做成表格，套娃立刻破掉。每一行不是“更强的模型”，只是四列答案不同的组合：
 
 | 模型 | 无人工标签？ | 能生成？ | 定义可讨论的 \(p(x)\)？ | 显式低维 latent？ |
 |------|--------------|----------|-------------------------|-------------------|
@@ -213,25 +206,7 @@ p(x)=\prod_t p(x_t\mid x_{<t})
 | Transformer decoder | self-supervised | 是 | 按 chain rule 可算 | 不必有低维 \(z\) |
 | conditional GAN | 否，用了 class/text | 是 | 通常否 | 是 |
 
-所以真正正交的是四条轴：
-
-```text
-训练信号轴：是否依赖人工 target labels？
-  ├── unsupervised / self-supervised
-  └── supervised / conditional supervision
-
-能力轴：是否能够产生新 samples？
-  ├── descriptive / clustering / representation
-  └── generative
-
-概率语义轴：是否定义可讨论的 pθ(x)？
-  ├── implicit generator，例如典型 GAN
-  └── probabilistic generator，例如 Flow / VAE / Diffusion
-
-结构轴：是否引入 latent variable z？
-  ├── explicit latent-variable model
-  └── 不一定需要低维 latent，例如 autoregressive model
-```
+这张表的四个问题就是四条轴，轴与轴之间可以独立拨动：同样是 generative，conditional GAN 把训练信号轴拨到 supervised，Flow 把概率轴拨到 exact；同样是 latent variable model，Flow 的 \(z\) 是同维坐标，VAE 的 \(z\) 才追求压缩。不要把“用了 latent”自动等同于“低维”“语义”“能打分”中的任何一项。
 
 “Generative”描述能力，“unsupervised”描述训练信号。Conditional image generator 用 class labels 或 text–image pairs 训练，它可以很 generative，却不是 unsupervised。本章后面默认讨论的是这两条轴的交集——无人工标签的生成模型——但请把交集当成原书的选题，而不是三个词的数学包含关系。
 
@@ -239,9 +214,9 @@ p(x)=\prod_t p(x_t\mid x_{<t})
 
 ---
 
-## 2. 为什么几乎总要一个 Latent Space？
+## 2. 为什么后面四章几乎都要一个 Latent Space？
 
-1.5 节末尾的问题还在：生成常常写成 \(z\mapsto x\)，为什么不直接在 pixel 空间里写一个 \(p(x)\)？
+上一节最后留下的问题还在：生成常常写成 \(z\mapsto x\)，为什么不直接在 pixel 空间里写一个 \(p(x)\)？
 
 因为现实数据的 ambient space 极大，有意义的数据却只占其中薄薄一层。
 
@@ -274,7 +249,9 @@ x：落在那张薄片附近的复杂数据
 
 这张地图就是 generator / decoder。\(z\) 是地图上的坐标，不是数据里已经写好的标签。
 
-但“低维 \(z\) 的每一维对应一个真实语义因素”只是愿望。即使 \(p_\theta(x)\) 学对了，\(z\) 的坐标系仍可以任意旋转、重参数化，而不改变观测分布。没有额外 supervision 或 inductive assumptions，disentanglement 往往不可唯一识别。后面把“well-behaved latent space”和“disentangled latent space”分成两条轴，原因就在这里：前者说几何别太疯，后者说坐标轴最好正好对齐人类概念——后者苛刻得多。
+前面 Transformer 那个反例同时提醒我们：直接在 \(x\) 空间里写一个复杂分布的路确实存在，所以这里说“几乎总要”而不是“必须”。问题只在于，后面四章想要的不是“能算概率”这一件事，还要能从好采样的坐标出发把新样本造出来；对图像这种高维对象，直接设计一个又简单、又好采样、又只落在人脸薄片上的 \(p(x)\)，比先设计一个简单 \(z\)、再学一张非线性 map 更难起步。
+
+但要小心，“低维 \(z\) 的每一维对应一个真实语义因素”只是愿望，不是自动结果。即使 \(p_\theta(x)\) 学对了，\(z\) 的坐标系仍可以任意旋转、重参数化，而不改变观测分布；没有额外 supervision 或 inductive assumptions，disentanglement 往往不可唯一识别。下一节把“well-behaved latent space”和“disentangled latent space”分成两条轴，原因就在这里：前者说几何别太疯，后者说坐标轴最好正好对齐人类概念——后者苛刻得多。
 
 有了“用 \(z\) 造 \(x\)”这条生产线，挑剔的问题马上出现：怎样才算造得好？只把 16 张最好看的图贴出来，够不够？
 
@@ -282,7 +259,7 @@ x：落在那张薄片附近的复杂数据
 
 ## 3. 一张好看的图远远不够：六个评价轴
 
-有了“用 \(z\) 造 \(x\)”这条生产线，怎样才算造得好？假设你刚训完一个人脸生成器，贴出 16 张最好看的图。一个不买账的审稿人不会停在“像不像照片”这一问上。原书的六条 desirable properties，其实就是他会连着问的六件事；它们彼此拆台，所以不存在单一冠军。
+上一节的问题正好替我们请来一位不买账的审稿人：你刚训完一个人脸生成器，贴出 16 张最好看的图，他不会停在“像不像照片”这一问上。原书的六条 desirable properties，其实就是他会连着问的六件事；它们彼此拆台，所以不存在单一冠军。问题越具体，越能看出为什么“漂亮图”只是及格线而不是满分线。
 
 第一问是速度。从模型生成一个样本应足够快，并能吃到 GPU 的并行。GAN 通常一步 \(z\mapsto x\)；基础 Diffusion 要几十到上千步 denoising。如果应用是交互式编辑，“图更漂亮但要等 30 秒”可能直接被否。
 
@@ -357,13 +334,13 @@ Mode collapse 被单独拿出来喊，是因为它最能骗过眼睛：高 fidel
 
 ## 5. 第一把尺子：Test Likelihood
 
-先从最完整的情况开始。假设模型定义了一个归一化的 \(p_\theta(x)\)，我们就能拿一批**训练时没见过的真实样本**来问：模型是否把概率放在了正确的地方？这批样本记作
+上一节只给了“概念上的两维”，还没有给数字。第一把尺子选最完整的入口：如果模型定义了一个归一化的 \(p_\theta(x)\)，那么最自然的问题就是——训练时没见过的真实样本，模型还认不认？这批样本记作
 
 \[
 D_{\mathrm{test}}=\{x_1,x_2,\ldots,x_N\}.
 \]
 
-其中，\(D_{\mathrm{test}}\) 是整个 test set，\(x_i\) 是其中第 \(i\) 个样本，\(N\) 是样本总数。\(\theta\) 表示模型学到的参数，\(p_\theta(x_i)\) 则表示参数固定为 \(\theta\) 时，模型在样本 \(x_i\) 处给出的 probability density（离散数据时就是 probability）。
+其中，\(x_i\) 是第 \(i\) 个 test sample，\(\theta\) 是学到的参数，\(p_\theta(x_i)\) 是模型给这个点分配的 probability density（离散数据时就是 probability）。
 
 如果暂时假设各个 test samples 是独立抽到的，那么模型赋给整批数据的 likelihood 是各样本 likelihood 的乘积：
 
@@ -373,23 +350,9 @@ p_\theta(D_{\mathrm{test}})
 \prod_{i=1}^{N}p_\theta(x_i).
 \]
 
-这个式子可以直接读成：
-
-```text
-模型对整批测试数据的认可程度
-        =
-模型对每个测试样本认可程度的连乘
-```
-
 只要模型很不认可其中一部分真实样本，对应的 \(p_\theta(x_i)\) 很小，整个乘积就会被拉低。
 
-实际计算不喜欢连乘。大量小数相乘容易发生 numerical underflow，乘法也不如加法方便处理。因此对两边取 logarithm，利用
-
-\[
-\log(ab)=\log a+\log b,
-\]
-
-就得到通常报告的 test log-likelihood：
+实际计算不喜欢连乘：大量小数相乘容易 numerical underflow，乘法也不如加法好优化。取 logarithm 后，连乘变成连加，这就是通常报告的 test log-likelihood：
 
 \[
 \log p_\theta(D_{\mathrm{test}})
@@ -397,7 +360,7 @@ p_\theta(D_{\mathrm{test}})
 \sum_{i=1}^{N}\log p_\theta(x_i).
 \]
 
-符号 \(\sum\) 表示把每个样本的 log-likelihood 加起来，\(\log\) 只是把连乘变成连加，并没有改变模型之间的优劣顺序。这个总和越大，说明模型整体上越认可这些 test samples。训练时常见的 negative log-likelihood（NLL）只是再加一个负号：
+log 只是把连乘变成连加，没有改变模型之间的优劣顺序。总和越大，说明模型整体越认可这批 test samples。训练时常见的 negative log-likelihood（NLL）只是再加一个负号：
 
 \[
 \operatorname{NLL}(D_{\mathrm{test}})
@@ -409,23 +372,21 @@ p_\theta(D_{\mathrm{test}})
 
 这里的关键词是 test。若只看 train likelihood，模型可能记住训练集，在每个训练点附近堆出很高的 density，点与点之间却是一片空白。换成没见过的 \(D_{\mathrm{test}}\)，才是在检查模型有没有学到能够泛化的数据规律。这和第 8 章的教训完全相同：训练集上的高分不能证明模型理解了总体分布。
 
-为什么 likelihood 多少能检查 coverage？因为 \(p_\theta\) 必须归一化。模型把概率过多地塞进“年轻人正脸”这个小角落，就没有足够的概率留给老年人、侧脸和其他真实模式；这些 test samples 的 log-likelihood 会下降。它因此能检查模型是否认得真实数据，但仍然没有回答“生成的图看起来是否自然”。
+为什么 likelihood 多少能检查 coverage？写训练目标 NLL 时已经埋下伏笔：\(p_\theta\) 必须归一化。模型把概率过多地塞进“年轻人正脸”这个小角落，就没有足够的概率留给老年人、侧脸和其他真实模式；这些 test samples 的 log-likelihood 会下降。它因此能检查模型是否认得真实数据，但仍然没有回答“生成的图看起来是否自然”。
 
-这里还藏着一个容易误解的地方：**高 density 不等于典型 sample**。设
+这里还藏着一个容易误解的地方：**高 density 不等于典型 sample**。以 \(d\) 维 standard Gaussian 为例：
 
 \[
 X\sim\mathcal N(0,I_d),
 \]
 
-符号 \(\sim\) 表示“服从某个分布”，\(\mathcal N\) 表示 Gaussian distribution，\(0\) 是均值向量，\(I_d\) 是 \(d\) 维 identity matrix，表示各坐标方差均为 1 且彼此独立。换句话说，我们从 \(d\) 维 standard Gaussian 中随机抽一个向量 \(X=(X_1,\ldots,X_d)\)。符号 \(\mathbb E\) 表示对大量随机抽样取平均，\(\|X\|\) 表示 \(X\) 到原点的 Euclidean distance。因为
+这里 \(\mathcal N(0,I_d)\) 表示各坐标独立、方差为 1 的 Gaussian。因为
 
 \[
-\|X\|^2=X_1^2+X_2^2+\cdots+X_d^2,
-\qquad
 \mathbb E\|X\|^2=d,
 \]
 
-每个坐标都有 \(\mathbb E[X_j^2]=1\)，\(d\) 个坐标相加后，平均平方距离便是 \(d\)。而且高维时 \(\|X\|^2\) 会集中在 \(d\) 附近，所以典型样本到原点的距离大约是 \(\sqrt d\)。然而 Gaussian 的 point density 在原点 \(X=0\) 处最高。大多数样本因此集中在半径约为 \(\sqrt d\) 的薄壳附近，而不是集中在 density 最高的原点：
+其中 \(\mathbb E\) 是期望，\(\|X\|\) 是到原点的距离；且高维时 \(\|X\|^2\) 会集中在 \(d\) 附近，所以随机抽到的典型样本离原点约 \(\sqrt d\)。可是 point density 在原点最高，于是大多数样本落在半径约 \(\sqrt d\) 的薄壳上，而不是 density 最高的原点：
 
 ```text
 point density 最高：        原点
@@ -477,7 +438,7 @@ D_{KL}\bigl(p(y\mid x)\,\Vert\,p(y)\bigr)
 
 ## 7. IS 还不看真实数据：FID 把两批样本放到同一张地图
 
-IS 的问题不是“算得不够复杂”，而是它根本没有看 real set。它只检查生成图能不能骗过一个 classifier，却不知道真实数据长什么样。于是下一步的思路很直接：同一批 real images 和 generated images 都送进一个预训练网络，在同一个 feature space 里比较两朵云。
+上一节说 IS 的盲区是“不看 real set”，修复方向就明摆着：把 real images 和 generated images 都送进同一个预训练网络，在同一个 feature space 里比较两朵云。
 
 不能直接比较 raw pixels。猫平移一个 pixel，像素 L2 距离可能很大，人却仍把它看成同一只猫。FID 借用 Inception network 的中间 feature，假定这些 feature 比像素更接近语义相似度。
 
@@ -512,7 +473,7 @@ IS 补的是“没有 real set”，FID 补上后又把 fidelity 和 coverage �
 
 ## 8. FID 只有一个数：把 fidelity 和 coverage 拆开
 
-FID 已经同时看了 real set 和 generated set，但它把两种失败揉成了一个距离。实际调模型时，这不够用：我们得知道问题是“生成了很多假样本”，还是“只覆盖了真实数据的一小块”。Manifold precision / recall 就是为这个诊断设计的。
+FID 已经同时看了 real set 和 generated set，却只交回一个数。实际调模型时，这个数不够用：我们得知道问题是“生成了很多假样本”，还是“只覆盖了真实数据的一小块”。Manifold precision / recall 就是为这个诊断设计的。
 
 把 feature space 中真实样本占据的区域记作 data manifold，把生成样本占据的区域记作 model manifold。于是：
 
@@ -540,11 +501,9 @@ Precision 问：“我生成的东西，大多数像不像真的？”它接近 
 
 ---
 
-## 9. 四把尺子不是排行榜，而是一轮排查
+## 9. 尺子不是排行榜，而是一轮排查
 
-现在可以把四个 metric 串成一次实际诊断，而不是背四段定义。先问模型有没有概率语义：有的话，用 test likelihood 检查它是否认得没见过的真实样本；没有的话，likelihood 这一关就跳过。接着看生成样本本身，IS 可以检查单张图是否明确、生成集是否跨越多个 classifier classes，但它不看 real set，所以只能当初筛。
-
-如果想知道生成集和真实集是否整体接近，用 FID 把两批样本放进同一 feature space。不过 FID 仍然只给一个总分，不能说明是样本不真实，还是模式覆盖不足。遇到这种情况，再看 precision / recall：
+上一节的 precision / recall 解决了最后一个概念缺口，但真实工作中没人会把四把尺子全跑一遍然后报平均分。排查顺序取决于模型本身：先问它有没有概率语义，有就过 likelihood 这一关，没有就跳过；再回到样本本身，IS 检查生成集内部是否明确多样，但它不看 real set，只能当初筛；想看两朵云是否接近，用 FID；FID 分不清失败方向时，再用 precision / recall 定位。整体像下面这样走：
 
 ```text
 有 pθ(x)？
@@ -557,6 +516,8 @@ Precision 问：“我生成的东西，大多数像不像真的？”它接近 
    ├─ FID：生成集与真实集的 feature 云整体接近吗？
    └─ precision / recall：失败主要是 fidelity 还是 coverage？
 ```
+
+这张表不是另一套说法，只是把上面的排查顺序压缩成可复查的 cheat sheet：
 
 | Metric | 它主要回答什么 | 它回答不了什么 |
 |--------|----------------|----------------|
@@ -574,7 +535,7 @@ Precision 问：“我生成的东西，大多数像不像真的？”它接近 
 
 ## 10. 四类生成模型：同一组轴上的不同交换
 
-原书后面四章都从某种 latent 出发，用深度网络把它映到数据空间。差别不在“是不是生成模型”，而在它们愿意丢掉哪一条性质，去换哪一条性质。
+上一节的排查表其实已经预告了这四章：没有一把尺子全能，所以模型只能先选“我在哪一关下注”。原书后面四章都从某种 latent 出发，用深度网络把它映到数据空间；差别不在“是不是生成模型”，而在它们愿意丢掉哪一条性质，去换哪一条性质。下面按“换来什么 / 丢掉什么”读，不要按“谁比谁强”读。
 
 ### GAN
 
@@ -595,7 +556,7 @@ x_real / x_fake → discriminator
 x  ↔  z：可逆 mapping，Jacobian 可算
 ```
 
-它坚持 \(p_\theta(x)\) 必须能精确写出来。办法是从简单密度出发，做一串可逆变换，用 change of variables 把密度跟着搬过来。
+GAN 把“给样本打概率”整个丢掉，下一家恰好把这句话当成底线：Flow 坚持 \(p_\theta(x)\) 必须能精确写出来。办法是从简单密度出发，做一串可逆变换，用 change of variables 把密度跟着搬过来。
 
 - 换来的：exact likelihood、exact latent mapping；
 - 丢掉的：architecture 必须 invertible，表达能力被捆住，sample 往往没 GAN / Diffusion 那么锐。
@@ -607,7 +568,7 @@ x → approximate posterior q(z|x)
 z → probabilistic decoder p(x|z)
 ```
 
-它想要 latent variable model 的完整概率故事，但 \(p(x)=\int p(x\mid z)p(z)\,dz\) 通常积不出来。于是引入 encoder 去近似 posterior，优化 likelihood 的 lower bound（ELBO）。这是第 17 章的母问题。
+Flow 的代价是 architecture 必须可逆。如果不想被可逆性捆住，就得换一个问题：能不能保留不可逆的 decoder，却仍然按概率训练？VAE 想要 latent variable model 的完整概率故事，但 \(p(x)=\int p(x\mid z)p(z)\,dz\) 通常积不出来，于是引入 encoder 去近似 posterior，优化 likelihood 的 lower bound（ELBO）。这是第 17 章的母问题。
 
 - 换来的：概率故事清楚、latent space 通常较规则、训练稳定；
 - 丢掉的：exact likelihood；样本常偏平滑（decoder 把不确定性吃进模糊里）。
@@ -619,7 +580,7 @@ x → gradually add noise → ε          （forward，固定不学）
 gradually denoise ε → x              （reverse，才是模型）
 ```
 
-它把“一步从噪声跳到图像”拆成许多小去噪步骤。第 18 章会说明：forward 加噪是设计好的，learned 的是 reverse。
+VAE 里的 latent 仍是一个想抓语义的压缩向量。Diffusion 换了一条更谦逊的路：不要求 \(z\) 有语义，直接把“一步从噪声跳到图像”拆成许多小去噪步骤。第 18 章会说明：forward 加噪是设计好的，learned 的是 reverse。
 
 - 换来的：训练稳定、sample quality 高，coverage 经验上往往也好；
 - 丢掉的：多步 sampling 慢；基本形式优化的是 likelihood bound；这条 noise path 通常不是可拧的语义旋钮。
