@@ -277,6 +277,61 @@ KL 非负，所以右边第二项 \(\ge 0\)，第一项永远不超过 \(\log p_
 
 当 \(q_\phi(z\mid x)=p_\theta(z\mid x)\) 时 KL 为 0，bound 才 tight。否则 ELBO 上升，并不保证每一次参数更新都让 true log-likelihood 同步上升——variational gap 本身也随 \(\theta\) 变。最大化 ELBO 是 exact log-likelihood 的 surrogate，不是它的别名。
 
+离散、两值 \(z\)，可以把三件事同时算完。固定一个 \(x\)，令
+
+\[
+p(z=0)=p(z=1)=\tfrac12,
+\qquad
+p(x\mid z=0)=0.8,\quad p(x\mid z=1)=0.2.
+\]
+
+Marginal
+
+\[
+p(x)=0.5\cdot 0.8+0.5\cdot 0.2=0.5,
+\qquad
+\log p(x)=\log 0.5\approx -0.693.
+\]
+
+True posterior：\(p(z=0\mid x)=0.8,\ p(z=1\mid x)=0.2\)。Encoder 若给出同样的 \(q=(0.8,0.2)\)，则 posterior KL 为 0。ELBO 是
+
+\[
+\begin{aligned}
+\mathbb E_q[\log p(x,z)-\log q]
+&=
+0.8\bigl(\log(0.5\cdot 0.8)-\log 0.8\bigr)
++
+0.2\bigl(\log(0.5\cdot 0.2)-\log 0.2\bigr)\\
+&=
+\log 0.5
+\approx -0.693.
+\end{aligned}
+\]
+
+ELBO \(=\log p\)，界贴死。若 encoder 偷懒输出均匀 \(q=(0.5,0.5)\)：
+
+\[
+\begin{aligned}
+\mathrm{ELBO}
+&=
+0.5\log\frac{0.5\cdot 0.8}{0.5}
++
+0.5\log\frac{0.5\cdot 0.2}{0.5}
+=
+0.5\log 0.8+0.5\log 0.2
+\approx -0.916,
+\end{aligned}
+\]
+
+\[
+D_{\mathrm{KL}}(q\Vert p(\cdot\mid x))
+=
+0.5\log\frac{0.5}{0.8}+0.5\log\frac{0.5}{0.2}
+\approx 0.223.
+\]
+
+相加：\(-0.916+0.223=-0.693=\log p(x)\)。**恒等式是算术，不是口号：松掉的那截正好是 KL。** 训练最大化 ELBO 时，若 \(q\) 停在均匀，你会少记 \(0.223\) 的 log-likelihood，decoder 收到的梯度也掺了错的 \(z\) 权重。
+
 同一条界也可以从 Jensen 走出来，几何图像更直。对数是凹函数：先取期望再取对数，一定不低于先取对数再取期望，
 
 \[
@@ -415,7 +470,7 @@ x → encoder → μ,σ → μ + σ⊙ε → z → decoder
 
 Decoder loss 对 \(z\) 的梯度可以继续传到 encoder。Reparameterization 没有删除随机性，只是把随机源从“依赖 \(\phi\) 的分布节点”移到“标准噪声 \(\epsilon\)”。
 
-\(\mu=2,\sigma=0.5,\epsilon=-1\) 时 \(z=1.5\)。同一个 \(x\) 换一个 \(\epsilon\) 就换一个 \(z\)，但都服从 encoder 定义的 Gaussian。这正是 Monte Carlo ELBO 所要的：一次前向，一份随机下界估计。
+\(\mu=2,\sigma=0.5,\epsilon=-1\) 时 \(z=\mu+\sigma\epsilon=2+0.5\cdot(-1)=1.5\)。换 \(\epsilon=+1\) 得 \(z=2.5\)；换 \(\epsilon=0\) 得 \(z=2\)。三个数都来自同一个 \(q=\mathcal N(2,0.5^2)\)，差别只在独立噪声。梯度：\(\partial z/\partial\mu=1\)，\(\partial z/\partial\sigma=\epsilon\)，所以 \(\epsilon=-1\) 那一次对 \(\sigma\) 的 pathwise 梯度与 \(\epsilon=+1\) 符号相反——Monte Carlo 有方差，不是 \(z\) 变成了确定的编码。同一个 \(x\) 换一个 \(\epsilon\) 就换一个 \(z\)，但都服从 encoder 定义的 Gaussian。这正是 Monte Carlo ELBO 所要的：一次前向，一份随机下界估计。
 
 ---
 
@@ -556,7 +611,9 @@ Encoder 把样本集中到对当前 \(x\) 重要的区域，比从 prior 做 nai
 13. \(\beta\) 增大可能带来什么、牺牲什么？它能把 disentanglement 变成定理吗？  
 14. Amortized inference 摊销了什么成本，又引入什么 gap？  
 15. ELBO 的 \(\mathbb E[\log w]\) 与 importance sampling 的 \(\log\mathbb E[w]\) 为什么不能交换？  
-16. 为什么 vanilla VAE 不会仅凭 bottleneck 自动完成 denoising？
+16. 为什么 vanilla VAE 不会仅凭 bottleneck 自动完成 denoising？  
+17. 两值 \(z\)、\(p(x\mid z)=(0.8,0.2)\)、均匀 prior：\(\log p(x)\)、tight ELBO、均匀 \(q\) 的 ELBO 与 KL 各是多少？三者怎样加回去？  
+18. \(\mu=2,\sigma=0.5,\epsilon=-1\) 的 \(z\) 是多少？\(\partial z/\partial\sigma\) 为什么带着 \(\epsilon\)？
 
 ---
 

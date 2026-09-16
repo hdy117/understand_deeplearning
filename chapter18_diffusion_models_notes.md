@@ -174,7 +174,21 @@ z_t
 
 这就是 diffusion kernel。它把“顺序加噪”换成一次代数。
 
-\(\bar\alpha_t=0.64,\,x=1,\,\epsilon=-0.5\) 时，\(z_t=0.8\cdot 1+0.6\cdot(-0.5)=0.5\)。Signal 系数 0.8，noise 系数 0.6。小 \(t\) 时 \(\bar\alpha_t\) 接近 1，\(z_t\) 仍像 \(x\)；大 \(t\) 时 \(\bar\alpha_t\) 接近 0，\(z_t\) 接近标准正态。
+取 \(\bar\alpha_t=0.64\)，则 \(\sqrt{\bar\alpha_t}=0.8\)，\(\sqrt{1-\bar\alpha_t}=0.6\)。标量 \(x=1,\epsilon=-0.5\)：
+
+\[
+z_t
+=
+\sqrt{\bar\alpha_t}\,x+\sqrt{1-\bar\alpha_t}\,\epsilon
+=
+0.8\cdot 1+0.6\cdot(-0.5)
+=
+0.5.
+\]
+
+一步 Gaussian \(q(z_t\mid x)=\mathcal N(0.8\,x,\,0.36)\) 已经写完：均值 \(0.8\)，方差 \(1-\bar\alpha_t=0.36\)。不必经过 \(z_1,\ldots,z_{t-1}\)。\(\epsilon\)-prediction 的监督 target 就是这个抽出来的 \(\epsilon=-0.5\)，不是 \(z_t\)，也不是 \(x\)：网络看见 \(0.5\) 和时刻 \(t\)，要猜当初那颗 \(-0.5\)。
+
+Signal 系数 0.8，noise 系数 0.6。小 \(t\) 时 \(\bar\alpha_t\) 接近 1，\(z_t\) 仍像 \(x\)；大 \(t\) 时 \(\bar\alpha_t\) 接近 0，\(z_t\) 接近标准正态。
 
 有限 \(T\) 时只能说“接近”，不要写成“等于”。因为
 
@@ -316,6 +330,30 @@ w_t\|\epsilon-\epsilon_\theta(z_t,t)\|^2
 z_t=\sqrt{\bar\alpha_t}\,x+\sqrt{1-\bar\alpha_t}\,\epsilon.
 }
 \]
+
+同一标量样本上的 \(L_{\mathrm{simple}}\)：若网络输出 \(\hat\epsilon=-0.4\)，target \(\epsilon=-0.5\)，则
+
+\[
+L_{\mathrm{simple}}
+=
+(-0.5-(-0.4))^2
+=
+0.01.
+\]
+
+若瞎猜 \(\hat\epsilon=0\)，损失是 \(0.25\)。一次前向、一个数，没有把 ELBO 的整条链展开。由 \(\hat\epsilon=-0.4\) 反推
+
+\[
+\hat x_0
+=
+\frac{0.5-0.6\cdot(-0.4)}{0.8}
+=
+\frac{0.74}{0.8}
+=
+0.925
+\]
+
+（真 \(x=1\)）。噪声偏了 \(0.1\)，clean 估计偏了 \(0.075\)，系数 \(0.6/0.8=0.75\) 把误差从 \(\epsilon\) 空间折到 \(x\) 空间。
 
 必须把三层分开，否则会把工程简化说成定理：
 
@@ -549,7 +587,9 @@ Compute 下降，质量上限受 autoencoder 重建能力约束。这里的 late
 13. 为什么图像 diffusion 常用 U-Net？Time embedding 在告诉网络什么？  
 14. CFG 公式里 \(w=0,1,>1\) 分别是什么？为什么说 \(w>1\) 不是凸插值？  
 15. DDIM 为什么常常不必重训？Latent diffusion 用什么代价换速度？  
-16. 基础 pixel-space 的 \(z_t\) 和 VAE 的 \(z\) 差在哪一件关于“压缩 / 语义”的事？
+16. 基础 pixel-space 的 \(z_t\) 和 VAE 的 \(z\) 差在哪一件关于“压缩 / 语义”的事？  
+17. \(\bar\alpha_t=0.64,x=1,\epsilon=-0.5\) 时 \(z_t\) 与 \(q(z_t\mid x)\) 的均值方差是什么？\(\epsilon\)-target 是哪个数？  
+18. \(\hat\epsilon=-0.4\) 时 \(L_{\mathrm{simple}}\) 和 \(\hat x_0\) 各是多少？
 
 ---
 

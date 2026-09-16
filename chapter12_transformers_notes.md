@@ -175,7 +175,73 @@ X
 | \(v_j\) | \([d_v]\) | 位置 \(j\) 真正携带的 payload |
 | \(z_i\) | \([d_v]\) | 位置 \(i\) 读完全序列后的新表示 |
 
-用三个 tokens、一个 query 走一遍。假设缩放和 mask 之后分数是 \(s_i=[2,1,0]\)，则
+先把整条公式压成两个 token、\(D=2\)、先假装 \(W_Q=W_K=W_V=I\)（于是 \(Q=K=V=X\)），只看算术。两行是 `it` 和 `animal`：
+
+\[
+X=\begin{bmatrix}1&0\\0&1\end{bmatrix}
+\quad
+\begin{aligned}
+&\text{row 0: }q_0=k_0=v_0=[1,0]\quad(\texttt{it})\\
+&\text{row 1: }q_1=k_1=v_1=[0,1]\quad(\texttt{animal})
+\end{aligned}
+\]
+
+\(d_k=2\)，\(\sqrt{d_k}=\sqrt{2}\approx 1.414\)。Score 矩阵：
+
+\[
+QK^{\top}
+=\begin{bmatrix}1&0\\0&1\end{bmatrix},
+\qquad
+S=\frac{QK^{\top}}{\sqrt{2}}
+\approx
+\begin{bmatrix}0.707&0\\0&0.707\end{bmatrix}.
+\]
+
+`it` 那一行 \(\operatorname{softmax}([0.707,\ 0])\approx[0.668,\ 0.332]\)。输出
+
+\[
+z_{\texttt{it}}
+\approx
+0.668[1,0]+0.332[0,1]
+=[0.668,\ 0.332].
+\]
+
+还没学投影时，自己和自己最像，所以 `it` 仍以自己的 payload 为主，只混进约三分之一的 `animal`。训练要做的，就是让 \(W_Q,W_K\) 把 `it` 的 query 拧到更靠近 `animal` 的 key。
+
+把同一套数改成「已经学歪了的匹配」。设投影后
+
+\[
+q_{\texttt{it}}=[1,1],
+\quad
+k_{\texttt{animal}}=[1,1],
+\quad
+k_{\texttt{it}}=[1,0],
+\quad
+v_{\texttt{it}}=[1,0],
+\quad
+v_{\texttt{animal}}=[0,2].
+\]
+
+未缩放点积：\(q\cdot k_{\texttt{it}}=1\)，\(q\cdot k_{\texttt{animal}}=2\)。除以 \(\sqrt{2}\) 后 \(s\approx[0.707,\ 1.414]\)，
+
+\[
+\operatorname{softmax}\approx[0.332,\ 0.668].
+\]
+
+于是
+
+\[
+z_{\texttt{it}}
+\approx
+0.332[1,0]+0.668[0,2]
+=[0.332,\ 1.336].
+\]
+
+旋钮现在主要拧在 `animal` 的 value 上——这就是 content-dependent routing 的最小数字版：同样两个位置，分数表一变，读到的 payload 从「自己」变成「那个实体」。
+
+把句子换成 `it was tired` 里的第三个词还是 `too wide`，只需再给 `street` 一个不同的 key。若 `tired` 让 \(q_{\texttt{it}}\) 靠近 \(k_{\texttt{animal}}\)，权重就像上一行的 \(0.668\)；若 `too wide` 把 query 拧向 \(k_{\texttt{street}}\)，同一格 `it` 会改读另一行 value。CNN 做不到这件事：相对偏移写死以后，权重表不会因第三个词翻面。
+
+再用三个 tokens、一个 query 走一遍加权和。假设缩放和 mask 之后分数是 \(s_i=[2,1,0]\)，则
 
 \[
 a_i=\operatorname{softmax}([2,1,0])

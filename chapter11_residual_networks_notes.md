@@ -85,6 +85,20 @@ x → f1 → f2 → f3 → ... → output
 
 $f_\ell$ 一旦学歪，后面所有层只能在被破坏的表示上继续算。想让某一层「什么也不做」，等于要求一个带 ReLU、convolution、随机初始化的非线性映射精确地学会 $f(h)=h$。这在函数类里往往做得到，在 optimization landscape 里却很贵：你是在所有可能的重写里，搜那一张恰好等于原文的纸。
 
+最小的 identity-hard 例子。令输入 $h=[2,-1]$，层是「仿射再 ReLU」：
+
+\[
+f(h)=\operatorname{ReLU}(Wh+b).
+\]
+
+要 $f(h)=h$，必须同时满足 $W[2,-1]^\top+b=[2,-1]^\top$，**并且** 第二维已经是负的，ReLU 会把它切成 $0$。于是
+
+\[
+\operatorname{ReLU}([2,-1])=[2,0]\neq[2,-1].
+\]
+
+无论 $W=I$、$b=0$ 多么「看起来像恒等」，只要有一维落在 ReLU 的死区，输出就不是 $h$。SGD 要从随机的 $W,b$ 走到「负分量也能原样出去」，等于要绕开这段非线性，或者把那一维的 pre-activation 刚好顶回负数——搜索空间里这是一条细缝，不是默认点。Residual 把默认改成 $h+F(h)$：即便 $F$ 里仍有 ReLU，只要 $F\approx 0$，加法支路上的 $h$ 不会被切掉。
+
 ### 1.2 反向必须穿过整条 Jacobian 连乘
 
 Loss $\mathcal{L}$ 对早期表示的导数，是一串局部 Jacobian 的乘积：
@@ -127,6 +141,20 @@ h_l ─────────────┤                               + �
 ```
 
 $h_\ell$ 是已经有的 representation，原样保留；$F_\ell$ 是需要学习的 correction / residual；相加之后才是下一表示。层不再被要求发明一个新世界，只被要求回答：在现有表示上，这一步该补多少、删多少。
+
+手加一次。令
+
+\[
+h=[2.0,\ -1.0],\qquad F(h)=[0.5,\ 0.3].
+\]
+
+则
+
+\[
+h+F(h)=[2.5,\ -0.7].
+\]
+
+第一维被抬高 $0.5$，第二维（那个 ReLU 单独做 identity 时会丢掉的负数）还在，只是被修正了 $0.3$。若这一步不知道该改什么，$F=[0,0]$，输出就是 $[2,-1]$ 原样——上一节那个 identity-hard 的缝，在加法接口上变成了原点附近的廉价默认。
 
 用改文章来看同一件事。Plain 思路是每一轮从空白纸重写整篇；residual 思路是保留当前稿，只写修改意见——补一个例子、删一句废话、调一段顺序。如果这一轮不知道怎么改，只要
 
@@ -211,7 +239,21 @@ h_{\ell+1}=h_\ell+F_\ell(h_\ell).
 =I+J_{F_\ell}.
 \]
 
-Plain layer 只有 $J_F$；residual block 多了 identity term $I$。Backward 可以走 learned branch，也可以走一条不依赖 $F$ 学得好不好的贡献：
+Plain layer 只有 $J_F$；residual block 多了 identity term $I$。Backward 可以走 learned branch，也可以走一条不依赖 $F$ 学得好不好的贡献。用 $2\times 2$ 钉死。设
+
+\[
+F(h)=[0.4\,h_1,\ 0.1\,h_2],
+\qquad
+J_F=\begin{bmatrix}0.4&0\\0&0.1\end{bmatrix}.
+\]
+
+Plain 层的局部 Jacobian 就是 $J_F$，奇异值 $0.4$ 和 $0.1$，两层连乘已经是 $0.04$ 量级。Residual 是
+
+\[
+I+J_F=\begin{bmatrix}1.4&0\\0&1.1\end{bmatrix}.
+\]
+
+两条特征值都靠近 $1$，不靠近 $0$。Loss 对 $h$ 的梯度若是 $g=[1,1]$，plain 回传 $J_F^\top g=[0.4,0.1]$；residual 回传 $(I+J_F)^\top g=[1.4,1.1]$——旁路把「几乎没学到的那一维」也送回去了。这不是免死金牌：若 $J_F=\operatorname{diag}(-0.9,-0.9)$，则 $I+J_F$ 的特征值是 $0.1$，仍可能变弱。多出来的是 $I$ 这一项结构，不是「梯度永远为 $1$」。
 
 ```text
 Backward gradient

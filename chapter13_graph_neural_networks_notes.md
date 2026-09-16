@@ -254,6 +254,58 @@ h'_1=\frac{3}{2},\qquad h'_2=\frac{7}{3},\qquad h'_3=3.
 
 第一遍到这里只要求一件事：你能指出每个 $h'_v$ 是哪些输入加起来的。谁是 $\mathcal N(v)$、self-loop 算不算进去、AGG 是 sum 还是 mean，三句话必须能对上那三个输出。三个数可以手加；训练时要对所有 node 同时做这件事，所以下一节把它写成矩阵。编号合不合法、degree 会不会虚高，等公式能跑了再问。
 
+把同一张图拆成真正的 Message → Aggregate → Update，仍然只用三个标量。无向边、暂不加 self-loop、message 就等于发送者状态（$M(h_u)=h_u$），AGG 用 mean，update 用「自己加摘要」：
+
+\[
+h'_v=h_v+\operatorname{mean}\{h_u:u\in\mathcal N(v)\}.
+\]
+
+```text
+v1 -- v2 -- v3
+h =  1     2      4
+```
+
+Messages：
+
+```text
+v1 → v2 : 1
+v2 → v1 : 2
+v2 → v3 : 2
+v3 → v2 : 4
+```
+
+Mean aggregate（每个 receiver 只看入边）：
+
+\[
+\bar m_1=2,
+\qquad
+\bar m_2=\frac{1+4}{2}=2.5,
+\qquad
+\bar m_3=2.
+\]
+
+Update：
+
+\[
+h'_1=1+2=3,
+\qquad
+h'_2=2+2.5=4.5,
+\qquad
+h'_3=4+2=6.
+\]
+
+输出集合 $\{3,4.5,6\}$。中心不再只因为 degree 大而「加更多项」——mean 已经除掉信箱大小；它仍然和两端不同，因为纸条内容不同。
+
+现在只改抽屉标签，把行号换成 $v3,v1,v2$（特征跟着人走）：
+
+```text
+new order:  v3, v1, v2
+new H:      [4, 1, 2]
+edges:      v3--v1 不存在；v1--v2、v2--v3 仍在
+```
+
+对每个 **人** 再走一遍同样的 $M$/mean/$U$，得到 $h'_{v3}=6$、$h'_{v1}=3$、$h'_{v2}=4.5$。写在新行序里是 $[6,3,4.5]$，**作为集合仍是 $\{3,4.5,6\}$**。Graph-level 若做 sum readout，$3+4.5+6=13.5$，与旧编号相同。Node-level 预测必须跟着人搬家：原来关于 v2 的 $4.5$ 现在在第 3 行，不能留在「第 2 行」那个抽屉里。这就是下一节 permutation equivariance / invariance 要写成 $P$ 的那句话，三个数已经发生过一遍。
+
 ---
 
 ## 4. Adjacency 不是神秘乘法，只是在点名

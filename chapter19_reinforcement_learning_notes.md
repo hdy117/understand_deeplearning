@@ -149,7 +149,19 @@ MDP 的零件：
 
 现实里 agent 常常看不见 true state，只能看见 observation \(o_t\sim p(o_t\mid s_t)\)。这是 POMDP。一张游戏截图可能有位置、没有速度；单帧不够预测下一帧。堆叠 frames 或用 recurrent state，是在把 history 手工塞回“近似 Markov 的 state”。Atari 上的 DQN 后面会回到这件事。
 
-State 定义错了，后面所有 value 都在估一个答非所问的期望。先把对象说对，再谈“长期”。
+State 定义错了，后面所有 value 都在估一个答非所问的期望。先把对象说对，再谈“长期”。后面所有数值例都钉在同一张两格冰面上。
+
+### 贯穿算例：两格 MDP
+
+企鹅只站在两格：\(S=\{\mathrm{Ice},\mathrm{Fish}\}\)。动作只有两个：\(A=\{\mathrm{stay},\mathrm{go}\}\)。\(\mathrm{Fish}\) 是吸收终点：一到就拿 \(+5\) 再结束。\(\mathrm{Ice}\) 上走路有小代价。转移先做成确定性，方便手算：
+
+```text
+Ice --stay--> Ice     r = -1
+Ice --go----> Fish    r = -1   (这一步仍扣走路分)
+Fish --any--> Fish    r = +5   then done
+```
+
+折扣 \(\gamma=0.9\)。初始总在 \(\mathrm{Ice}\)。这张图小到可以在纸上把 return、Bellman、探索、policy gradient 各算一遍，后面不再换环境。
 
 ---
 
@@ -177,7 +189,43 @@ G_t
 G_t=1+0.9\cdot 0+0.9^2\cdot 2=2.62.
 \]
 
-一个动作眼前扣分，若能绕开冰洞、最终吃到鱼，长期仍可能更好。Credit assignment 的数学座位就是 \(G_t\)：终局的鱼，会贴现回当初那一步转向。
+同一折扣钉到两格 MDP。轨迹 A：在 \(\mathrm{Ice}\) 上 `stay` 两次再 `go`，然后在 \(\mathrm{Fish}\) 拿一次 \(+5\) 结束。Rewards：
+
+\[
+(-1),\;(-1),\;(-1),\;(+5).
+\]
+
+从第一步起的 return：
+
+\[
+\begin{aligned}
+G_0
+&=
+-1 + 0.9\cdot(-1) + 0.9^2\cdot(-1) + 0.9^3\cdot 5 \\
+&=
+-1 -0.9 -0.81 + 0.729\cdot 5
+=
+-2.71 + 3.645
+=
+0.935.
+\end{aligned}
+\]
+
+轨迹 B：第一步就 `go`。Rewards：\((-1),\;(+5)\)。
+
+\[
+G_0=-1+0.9\cdot 5=3.5.
+\]
+
+```text
+Trajectory A: Ice,stay → Ice,stay → Ice,go → Fish
+              G_0 = 0.935
+
+Trajectory B: Ice,go → Fish
+              G_0 = 3.5
+```
+
+`stay` 眼前只是 \(-1\)，`go` 眼前也是 \(-1\)。差在后面：A 把 \(+5\) 推迟了两步，\(\gamma^3=0.729\) 把鱼打成 \(3.645\)，前面三步走路已经吃掉 \(2.71\)。B 只推迟一步，鱼值 \(4.5\)，净 \(3.5\)。一步 reward 分不出 `stay` 和 `go`；return 分得出。Credit assignment 的数学座位就是 \(G_t\)：终局的鱼，会贴现回当初那一步转向。
 
 Return 仍是一条轨迹上的随机数。同一个 state 出发，冰面一滑、鱼一刷新，\(G_t\) 就不一样。我们真正比较“这个格子好不好”时，要比的是它的期望。
 
@@ -261,6 +309,49 @@ r(s,a)+\gamma\max_{a'}q^*(s',a')
 }
 \]
 
+把两格 MDP 手算一次 backup。先估一张粗糙的 \(v\)：
+
+\[
+\hat v(\mathrm{Ice})=0,\qquad \hat v(\mathrm{Fish})=5.
+\]
+
+\(\mathrm{Fish}\) 已是终点，真实 \(v(\mathrm{Fish})=5\)（拿到鱼就停）。在 \(\mathrm{Ice}\) 上对 `go` 做一步 Bellman backup：立刻 \(r=-1\)，下一格是 \(\mathrm{Fish}\)，
+
+\[
+y_{\mathrm{go}}=-1+\gamma\hat v(\mathrm{Fish})=-1+0.9\cdot 5=3.5.
+\]
+
+对 `stay`：立刻 \(r=-1\)，下一格还是 \(\mathrm{Ice}\)，
+
+\[
+y_{\mathrm{stay}}=-1+\gamma\hat v(\mathrm{Ice})=-1+0.9\cdot 0=-1.
+\]
+
+若当前 policy 各以 \(1/2\) 选两个动作，state-value 的一次期望 backup 是
+
+\[
+\hat v'(\mathrm{Ice})
+=
+\tfrac12\cdot 3.5+\tfrac12\cdot(-1)
+=1.25.
+\]
+
+旧估计 \(0\) 被拉到 \(1.25\)。再 backup 一次：`stay` 的 target 变成 \(-1+0.9\cdot 1.25=0.125\)，于是
+
+\[
+\hat v''(\mathrm{Ice})
+=
+\tfrac12\cdot 3.5+\tfrac12\cdot 0.125
+=1.8125.
+\]
+
+```text
+v(Ice):  0  →  1.25  →  1.8125  →  …
+         每一步 = 平均(立刻 r + 0.9 × 下一格当前估计)
+```
+
+确定性最优 policy 永远 `go`，真实 \(v^*(\mathrm{Ice})=3.5\)。随机一半 `stay` 的 \(v_\pi(\mathrm{Ice})\) 更低，会收敛到解方程 \(v=-1+0.9(\tfrac12\cdot 5+\tfrac12 v)\) 得到的 \(v=1.25/0.55\approx 2.273\)，不是 \(3.5\)。Backup 走的是**当前 \(\pi\)** 的期望，不是偷偷换成最优。
+
 读成一句人话：
 
 > **当前动作的价值 = 立即 reward + 打折后的下一格潜力。**
@@ -301,10 +392,31 @@ TD error：        target 减当前估计，用来挪一步
 
 ```text
 概率 1-ε：选当前 argmax
-概率 ε：  随机选一个 action
+概率 ε：  随机选一个 action（均匀，含 argmax 自己）
 ```
 
-\(\epsilon\) 太小，困在错策略；太大，持续乱走。和监督学习的本质差别在这里：分类器的数据集不会因为你今天预测错了就少一类样本；RL 里不探索，未选过的 \((s,a)\) 就没有数据。后面 offline RL 会把这句话推到极限——历史数据里没做过的动作，价值不可识别。
+两格上假设当前 \(Q\) 表写错了方向：
+
+\[
+Q(\mathrm{Ice},\mathrm{stay})=2.0,\qquad Q(\mathrm{Ice},\mathrm{go})=0.5.
+\]
+
+**纯 greedy**（\(\epsilon=0\)）：永远 `stay`。永远看不到 `go` 的 \(r=-1\) 后面那条 \(+5\)。表会把 `stay` 继续朝 \(-1+\gamma Q(\mathrm{Ice},\mathrm{stay})\) 更新，越走越像“待在冰上有 2 分”，鱼那一格的证据为零。
+
+**\(\epsilon=0.2\)**：以 \(0.8\) 选 argmax=`stay`，以 \(0.2\) 均匀抽两个动作。于是
+
+\[
+\begin{aligned}
+P(\mathrm{stay})
+&=0.8+0.2\cdot\tfrac12=0.9,\\
+P(\mathrm{go})
+&=0.2\cdot\tfrac12=0.1.
+\end{aligned}
+\]
+
+平均每 10 次从 \(\mathrm{Ice}\) 出发，大约 1 次会 `go`，于是 \(Q(\mathrm{Ice},\mathrm{go})\) 终于接到 \(y=-1+0.9\cdot 5=3.5\)。几次更新后 `go` 会超过 `stay`，argmax 翻转。Greedy 没有这 10% 的数据，翻转不会发生。
+
+\(\epsilon\) 太小，困在错策略；太大，学对了之后仍有 10% 乱走，SARSA 会把这 10% 掉进洞的风险写进 Q。和监督学习的本质差别在这里：分类器的数据集不会因为你今天预测错了就少一类样本；RL 里不探索，未选过的 \((s,a)\) 就没有数据。后面 offline RL 会把这句话推到极限——历史数据里没做过的动作，价值不可识别。
 
 有了“必须探索”和“value 是期望”，可以谈表格方法。表格假设 state/action 少到能为每一格存一个数字。它们的差别不在公式漂不漂亮，而在信息从哪来。
 
@@ -512,6 +624,49 @@ Policy gradient theorem 的 Monte Carlo 形式：
 
 某动作后来得到高 return，就增加它在相似 state 下的 log probability。Likelihood-ratio / log-trick 把“轨迹分布依赖 \(\theta\)”转成对 log-policy 的梯度，**environment dynamics 不必可微**。冰面怎么滑、鱼怎么刷新，都可以当黑盒。
 
+两格上把 policy 做成 2-action softmax。只看 \(\mathrm{Ice}\)，两个 logit \(z_{\mathrm{stay}}=0,\,z_{\mathrm{go}}=0\)（均匀起步）：
+
+\[
+\pi(\mathrm{stay})=\pi(\mathrm{go})=\frac{e^{0}}{e^{0}+e^{0}}=0.5.
+\]
+
+抽到 `go`，走完轨迹 B，\(G=3.5\)。REINFORCE 对 logit 的梯度（softmax 的标准形式）是 \(( \mathbf{1}_{a}-\pi)\,G\)：
+
+\[
+\nabla_{z_{\mathrm{go}}}J \approx (1-0.5)\cdot 3.5=1.75,
+\qquad
+\nabla_{z_{\mathrm{stay}}}J \approx (0-0.5)\cdot 3.5=-1.75.
+\]
+
+学习率 \(\alpha=0.1\) 之后：
+
+\[
+z_{\mathrm{go}}\leftarrow 0.175,\qquad z_{\mathrm{stay}}\leftarrow -0.175.
+\]
+
+新概率：
+
+\[
+\pi(\mathrm{go})=\frac{e^{0.175}}{e^{0.175}+e^{-0.175}}\approx 0.587.
+\]
+
+抽到 `stay` 两次再 `go` 的轨迹 A，\(G=0.935\)。若第一步是 `stay`：
+
+\[
+\nabla_{z_{\mathrm{stay}}}\approx (1-0.5)\cdot 0.935=0.4675.
+\]
+
+\(G\) 仍为正，所以 `stay` 的 logit **也会被抬一点**——只是比 `go` 那次 \(1.75\) 小。这就是“较小但仍为正的 return 不会自动削弱该动作”。减去 baseline \(b=2\)（大约两种轨迹的粗平均）之后：
+
+\[
+\begin{aligned}
+\text{go: }&(3.5-2)\cdot 0.5=0.75,\\
+\text{stay: }&(0.935-2)\cdot 0.5=-0.5325.
+\end{aligned}
+\]
+
+现在 `stay` 的 advantage 为负，logit 被拉低。同一条样本、同一个 softmax，差一个不依赖当前动作的数，更新方向才分出好坏。
+
 原始 REINFORCE 用完整 episode 的 \(G_t\) 当权重。若回报总为正，sampled action 通常仍被强化，只是力度不同——“较小但仍为正”并不会自动降低概率。真正让好坏分家的是减去一个不依赖当前动作的 baseline：
 
 \[
@@ -626,17 +781,17 @@ Offline RL 也不等于 imitation：imitation 主要复制动作，未必用 rew
 2. 稀疏 reward、temporal credit assignment、环境随机、探索–利用，各对应企鹅 / 下棋的哪件事？  
 3. Markov 假设是“没有历史”，还是“历史已经进了 state”？  
 4. POMDP 与 MDP 差在哪？单帧 Atari 为什么不够？  
-5. Reward 与 return 为什么不能混？\(\gamma=1\) 在无限视野里有什么问题？  
+5. Reward 与 return 为什么不能混？两格上轨迹 A 的 \(G_0=0.935\)、轨迹 B 的 \(G_0=3.5\) 差在哪？\(\gamma=1\) 在无限视野里有什么问题？  
 6. \(v_\pi(s)\) 与 \(q_\pi(s,a)\) 各平均掉了什么？  
-7. Bellman equation、TD target、TD error 三者分别是什么？Bootstrap 带来什么好处和代价？  
-8. 为什么不探索就没有关于未选 actions 的数据？  
+7. Bellman equation、TD target、TD error 三者分别是什么？\(\hat v(\mathrm{Ice})=0\) 时，`go` 的 backup 为什么是 \(3.5\)、一次平均 backup 为什么把 \(v\) 拉到 \(1.25\)？  
+8. \(Q(\mathrm{Ice},\mathrm{stay})=2,\,Q(\mathrm{Ice},\mathrm{go})=0.5\) 时，\(\epsilon=0\) 和 \(\epsilon=0.2\) 各自会看见什么数据？\(P(\mathrm{go})=0.1\) 从哪来？  
 9. DP、MC、TD 的信息来源有什么不同？  
 10. 同一条 transition 上，SARSA target 1.9、Q-learning 4.6，差在假装未来会怎么走？  
 11. Terminal transition 为什么必须乘 \((1-\mathrm{done})\)？`terminated` 和 `truncated` 为什么不能混？  
 12. Replay buffer 和 target network 各治哪种病？Deadly triad 是哪三件的叠加？  
 13. Double DQN 拆开的是哪两件事？它和 target network 是同一帖药吗？  
 14. Policy gradient 为什么不要求 environment 可微？  
-15. Baseline 为什么能降方差、却不改变期望梯度？“较小但仍为正的 \(G_t\)”会不会自动削弱该动作？  
+15. Softmax 两个 logit 都是 0、抽到 `go` 且 \(G=3.5\) 时，\(z_{\mathrm{go}}\) 大约加多少？Baseline \(b=2\) 怎样让 `stay` 那次 \(G=0.935\) 变成负 advantage？  
 16. Actor 与 critic 分别学什么？Advantage 的符号怎样改 \(\log\pi\)？  
 17. Offline 数据里从未选过 `risky` 时，为什么无法判断它是 \(+10\) 还是 \(-10\)？  
 18. Decision Transformer 的 desired return 超出 dataset support 后，为什么不保证可实现？

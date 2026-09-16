@@ -155,6 +155,52 @@ f_3&=\beta_3+\omega_3 h_3,\\
 
 当 \(f_k=\beta_k+\omega_k h_k\) 时，\(\partial f_k/\partial\beta_k=1\)，\(\partial f_k/\partial\omega_k=h_k\)。输入层则是 \(x_i\) 代替 \(h_k\)。观察 1 在式子里出现了：\(\partial\ell/\partial\omega\) 正比于前向已经存下的源激活。
 
+**一套具体数字走完前向+后向。** 为了能手算，把玩具压成两层线性+一层平方损失（激活先拿掉，链式法则更干净；ReLU 只是再乘一个 \(0/1\) 门）：
+
+\[
+f_0=\beta_0+\omega_0 x,\qquad
+h_1=f_0,\qquad
+f_1=\beta_1+\omega_1 h_1,\qquad
+\ell=(f_1-y)^2.
+\]
+
+取 \(x=2\)，\(y=1\)，\(\beta_0=0.5\)，\(\omega_0=0.3\)，\(\beta_1=-0.2\)，\(\omega_1=0.4\)。
+
+前向：
+
+\[
+\begin{aligned}
+f_0&=0.5+0.3\cdot 2=1.1,\\
+f_1&=-0.2+0.4\cdot 1.1=0.24,\\
+\ell&=(0.24-1)^2=0.5776.
+\end{aligned}
+\]
+
+后向：
+
+\[
+\frac{\partial\ell}{\partial f_1}=2(0.24-1)=-1.52.
+\]
+
+\[
+\frac{\partial\ell}{\partial\beta_1}=-1.52,
+\quad
+\frac{\partial\ell}{\partial\omega_1}=h_1\cdot(-1.52)=1.1\cdot(-1.52)=-1.672.
+\]
+
+\[
+\frac{\partial\ell}{\partial h_1}=\omega_1\cdot(-1.52)=0.4\cdot(-1.52)=-0.608
+=\frac{\partial\ell}{\partial f_0}.
+\]
+
+\[
+\frac{\partial\ell}{\partial\beta_0}=-0.608,
+\quad
+\frac{\partial\ell}{\partial\omega_0}=x\cdot(-0.608)=2\cdot(-0.608)=-1.216.
+\]
+
+核对：\(\omega_0\) 的梯度确实 \(\propto x\)（源激活）。\(\alpha=0.1\) 时 \(\omega_0\leftarrow 0.3-0.1\cdot(-1.216)=0.4216\)。没有前向缓存的 \(h_1=1.1\) 和 \(x=2\)，后向乘不上。
+
 标量把机制说完了。深度网络只是把 \(\omega\) 换成矩阵、把乘法换成矩阵乘，规则不变。
 
 ---
@@ -272,6 +318,30 @@ D_h\,\sigma_\Omega^2\cdot\frac{\sigma_f^2}{2}.
 \]
 
 \(D_h=100\) 时 He 对应 \(\sigma_\Omega^2=0.02\)。图上前向激活方差和后向梯度方差都会稳住。
+
+**He 的算术。** \(D_h=100\)，ReLU 砍半：
+
+\[
+\sigma_{f'}^2=100\cdot\sigma_\Omega^2\cdot\frac{\sigma_f^2}{2}
+=50\,\sigma_\Omega^2\,\sigma_f^2.
+\]
+
+要 \(\sigma_{f'}^2=\sigma_f^2\)，必须 \(\sigma_\Omega^2=1/50=0.02\)，即 \(2/D_h\)。权重标准差 \(\sigma_\Omega=\sqrt{0.02}\approx 0.1414\)。若误用 Xavier 风格 \(\sigma_\Omega^2=1/D_h=0.01\)，每层方差乘 \(50\cdot 0.01=0.5\)，三层之后前向能量大约剩 \(0.5^3=0.125\)。
+
+**三层：消失对爆炸。** 忽略 ReLU 砍半，只看线性放大因子 \(\rho=D_h\sigma_\Omega^2\)（数量级故事）。\(D_h=100\)。
+
+| \(\sigma_\Omega\) | \(\sigma_\Omega^2\) | 一层 \(\rho\) | 三层 \(\rho^3\) | 名字 |
+|---|---|---|---|---|
+| \(0.01\) | \(10^{-4}\) | \(0.01\) | \(10^{-6}\) | vanishing |
+| He \(\approx 0.141\) | \(0.02\) | 量级 \(1\)（再配 ReLU 的 2） | 量级 \(1\) | 稳住 |
+| \(10\) | \(100\) | \(10^{4}\) | \(10^{12}\) | exploding |
+
+```text
+sigma=0.01 :  1  →  0.01  →  1e-4  →  1e-6     (signal dies)
+sigma=10   :  1  →  1e4   →  1e8   →  1e12     (signal explodes)
+```
+
+后向乘的是同一串 \(\Omega^\top\)，前向消失则梯度也消失，前向爆炸则梯度也爆炸。\(\sigma\) 错一个数量级，三层已经足够让 `float32` 变成全 0 或 Inf；学习率再怎么拧也救不了尺度。
 
 全零初始化是另一类失败：对称破坏失败，同层神经元收到相同梯度，学不到不同特征。通常 **权重随机、偏置可以是 0**。
 
