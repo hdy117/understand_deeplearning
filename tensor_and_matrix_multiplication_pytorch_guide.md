@@ -1,9 +1,33 @@
 # Tensor 与矩阵乘法：神经网络里“数字怎样流动”
 
-> 这篇是仓库里第 3、4、7、10、12、13 章之间的一座桥。
+> 这篇从 tensor、矩阵乘法和 Linear 出发，逐步连接到 CNN、Transformer、GNN 与 DeltaNet。
 > 目标不是背 API，而是看见一个 tensor 的 shape，就能预测下一步计算是否成立、输出会长什么样，以及它在神经网络里为什么总会遇到矩阵乘法。
 >
 > 相关笔记：第 3 章的 activation 与 hidden units；第 4 章的线性层记号；第 7 章的反向传播；第 10 章的卷积 tensor；第 12 章的 attention；第 13 章的图消息传递。
+
+## 目录
+
+- [0. 先把目标说清楚](#0-先把目标说清楚)
+- [1. Tensor 基础](#1-tensor-先别急着当成高深数学对象)
+- [2. 为什么网络总在重复加权求和](#2-为什么网络总在重复加权求和)
+- [3. 从点积推导矩阵乘法](#3-从点积重新推导矩阵乘法)
+- [4. Tensor 与矩阵乘法](#4-tensor-与矩阵乘法是什么关系)
+- [5. 用 PyTorch 写 nn.Linear](#5-用-pytorch-写-nnlinear)
+- [6. forward 与 backward](#6-一个-forward--backward-的完整执行路径)
+- [7. PyTorch 运算与 einsum](#7-pytorch-里几个看似相近的运算)
+- [8. CNN、Transformer 与 attention 家族](#8-cnntransformer-与-attention-家族)
+  - [8.10 Attention 家族专题](#810-transformer-attention-家族从-self-attention-到-deltanet)
+- [9. MLP、CNN、Transformer 的训练流程](#9-mlpcnntransformer-的训练标准流程)
+- [10. 常见误解](#10-常见误解能运行不等于语义正确)
+- [11. 一张 shape 追踪图](#11-一张-shape-追踪图从输入到线性层)
+- [12. 性能直觉](#12-性能直觉为什么-shape-还关系到速度和显存)
+- [13. 迁移练习](#13-迁移练习含答案)
+- [14. 主线小结](#14-主线小结先闭环再进入专题)
+- [15. 专题：W 的多种矩阵视角](#15-为什么-pytorch-的-w-是-d_out-d_in矩阵的多种视角)
+  - [15.3 两种向量约定](#153-两种向量约定为什么一个人写-w另一个人写-wt)
+  - [15.4–15.14 矩阵的多种视角](#154-矩阵视角一它是一张带语义的数字表)
+  - [15.15 常见 convention 选择](#1515-为什么不把-pytorch-直接设计成-d_in-d_out)
+  - [15.17 完整 shape 追踪](#1517-一个完整的-shape-追踪例子)
 
 ## 0. 先把目标说清楚
 
@@ -263,10 +287,10 @@ $$
 
 两套写法只是向量方向不同：
 
-~~~text
+```text
 column convention: W [D_out, D_in] @ x [D_in, 1] -> y [D_out, 1]
 row convention:    x [1, D_in] @ W [D_in, D_out] -> y [1, D_out]
-~~~
+```
 
 本教程在单样本推导里先使用 column convention；进入 batch 代码后，输入按 PyTorch 常用的 row-major 形式存成 [B, D_in]，所以写成 X @ W.T。PyTorch 的 nn.Linear(in_features, out_features) 也保存 weight 为 [D_out, D_in]，因此它的 forward 正是 input @ weight.T + bias。若你坚持把 W 写成 3x2，数值完全没错，只需把后面的公式改成 X @ W。
 
@@ -359,32 +383,32 @@ $$
 
 设：
 
-~~~text
+```text
 B  = 2    同时处理 2 个样本
 H  = 4    每个样本有 4 个 attention heads
 N  = 3    每个样本有 3 个 token
 Dh = 8    每个 head 中每个 token 有 8 个 features
-~~~
+```
 
 于是 q 和 k 都是 rank-4 tensor：
 
-~~~text
+```text
 q: [B, H, N, Dh] = [2, 4, 3, 8]
 k: [B, H, N, Dh] = [2, 4, 3, 8]
-~~~
+```
 
 把一个具体切片拿出来：
 
-~~~text
+```text
 q[1, 2]: [N, Dh] = [3, 8]
 k[1, 2]: [N, Dh] = [3, 8]
-~~~
+```
 
 q[1, 2] 表示第 2 个样本的第 3 个 head；它是一张普通的 rank-2 matrix，3 行对应 3 个 query/token positions，每行 8 个 features。k[1, 2] 同理，是同一个样本、同一个 head 的 3 个 key vectors。
 
 现在做：
 
-~~~python
+```python
 import torch
 
 B, H, N, Dh = 2, 4, 3, 8
@@ -393,19 +417,19 @@ k = torch.randn(B, H, N, Dh)
 q_one = q[1, 2]                    # [N, Dh] = [3, 8]
 k_one = k[1, 2]                    # [N, Dh] = [3, 8]
 score_one = q_one @ k_one.T        # [3, 8] @ [8, 3] -> [3, 3]
-~~~
+```
 
 这里才是最原始的矩阵乘法：[3, 8] @ [8, 3]。中间的 8 是 Dh，代表每个 query/key vector 的 feature 轴；它被收缩，输出保留两个 3，分别代表 query positions 和 key positions。
 
 完整的 rank-4 写法只是把所有 (b, h) 切片同时算掉：
 
-~~~text
+```text
 q                     [B, H, N, Dh] = [2, 4, 3, 8]
 k.transpose(-2, -1)   [B, H, Dh, N] = [2, 4, 8, 3]
                          └──────┘
                          收缩 Dh = 8
 scores                 [B, H, N, N] = [2, 4, 3, 3]
-~~~
+```
 
 对应的逐元素公式是：
 
@@ -420,11 +444,11 @@ $$
 
 所以这个 rank-4 matmul 可以等价地想象成：
 
-~~~text
+```text
 for b in range(B):
     for h in range(H):
         scores[b, h] = q[b, h] @ k[b, h].T
-~~~
+```
 
 真实 PyTorch 不会用这两个 Python for loop 慢慢跑，而是把 B×H 个 [N,Dh] @ [Dh,N] 交给 batched matrix multiplication kernel。
 
@@ -443,7 +467,7 @@ for b in range(B):
 
 用 PyTorch 验证：
 
-~~~python
+```python
 import torch
 
 B, H, N, Dh = 2, 4, 3, 8
@@ -460,31 +484,31 @@ for b in range(B):
     for h in range(H):
         expected = q[b, h] @ k[b, h].T
         assert torch.allclose(scores[b, h], expected)
-~~~
+```
 
 #### matmul、bmm、mm 对 rank 的态度
 
 三个 API 的区别正好能帮助我们区分“矩阵轴”和“batch 轴”：
 
-~~~text
+```text
 mm:     只接受 [M,K] @ [K,N]
 bmm:    只接受 [B,M,K] @ [B,K,N]
 matmul: 接受更一般的 rank，并把前导轴当作可 broadcasting 的 batch axes
-~~~
+```
 
 因此，rank-4 attention 不能直接交给 torch.mm：
 
-~~~python
+```python
 q = torch.randn(2, 4, 3, 8)
 k = torch.randn(2, 4, 3, 8)
 
 # torch.mm(q, k.transpose(-2, -1))  # 错误：mm 只接受 rank-2
 scores = torch.matmul(q, k.transpose(-2, -1))  # [2,4,3,3]
-~~~
+```
 
 如果把 B 和 H 合并，也可以手动把 rank-4 变成 rank-3，再使用 bmm：
 
-~~~python
+```python
 B, H, N, Dh = 2, 4, 3, 8
 q = torch.randn(B, H, N, Dh)
 k = torch.randn(B, H, N, Dh)
@@ -494,7 +518,7 @@ k_flat = k.reshape(B * H, N, Dh)                 # [B*H, N, Dh]
 scores_flat = torch.bmm(q_flat, k_flat.transpose(1, 2))
 scores_bmm = scores_flat.reshape(B, H, N, N)     # [B,H,N,N]
 assert torch.allclose(scores, scores_bmm)
-~~~
+```
 
 这里的 reshape 没有把不同样本或不同 head 的数字混在一个矩阵乘法里；它只是把两个并行索引 (B,H) 合并成一个 batch index B*H，以符合 bmm 的接口。
 
@@ -502,17 +526,17 @@ assert torch.allclose(scores, scores_bmm)
 
 QK.T 只产生“应该读谁”的 score；softmax 后得到 attention weights：
 
-~~~text
+```text
 A: [B, H, N, N]
 V: [B, H, N, Dh]
-~~~
+```
 
 然后：
 
-~~~text
+```text
 A @ V: [B, H, N, N] @ [B, H, N, Dh]
     -> [B, H, N, Dh]
-~~~
+```
 
 这次被收缩的不是 Dh，而是 key/token 轴上的 N：
 
@@ -527,24 +551,24 @@ i 是正在更新的 query position，j 是被读取的 key/value position，d �
 
 一个常见的 broadcasting 例子是让所有 heads 共享同一组 key/value：
 
-~~~text
+```text
 q: [B, H, N, Dh]
 k: [B, 1, N, Dh]
 k.T: [B, 1, Dh, N]
 q @ k.T -> [B, H, N, N]
-~~~
+```
 
 这里 k 的 head 轴大小为 1，会 broadcast 到 H 个 heads；它仍然没有和 B 或 N 做矩阵乘法。broadcast 只是复制或复用 batch slice，contracting dimension 仍然必须是 Dh。
 
 回到最短版本：
 
-~~~text
+```text
 rank 4 = [B, H, N, Dh]
 矩阵轴 = 最后两轴 [N, Dh]
 batch 轴 = 前两轴 [B, H]
 Q @ K.T = [N,Dh] @ [Dh,N]，对每个 (B,H) 并行
 A @ V   = [N,N]  @ [N,Dh]，对每个 (B,H) 并行
-~~~
+```
 
 一个容易混淆的例子来自 Transformer。若
 
@@ -650,7 +674,7 @@ $$
 
 valid convolution 会取四个 $2\times2$ 窗口：
 
-~~~text
+```text
 [1 2]        [2 3]        [4 5]        [5 6]
 [4 5]        [5 6]        [7 8]        [8 9]
 
@@ -658,7 +682,7 @@ valid convolution 会取四个 $2\times2$ 窗口：
 1*2 + 0*3 + 0*5 + 1*6 = 8
 1*4 + 0*5 + 0*7 + 1*8 = 12
 1*5 + 0*6 + 0*8 + 1*9 = 14
-~~~
+```
 
 所以输出是
 
@@ -671,7 +695,7 @@ $$
 
 PyTorch 代码把每个轴也标出来：
 
-~~~python
+```python
 import torch
 import torch.nn.functional as F
 
@@ -687,11 +711,11 @@ print(y.shape)  # torch.Size([1, 1, 2, 2])
 print(y[0, 0])
 # tensor([[ 6.,  8.],
 #         [12., 14.]])
-~~~
+```
 
 也可以把卷积临时改写成“局部 patch 的矩阵乘法”。这叫 im2col 思路，能帮助我们理解 contraction，但不意味着高性能实现一定真的创建这么大的中间矩阵：
 
-~~~python
+```python
 patches = F.unfold(x, kernel_size=2)
 # [B, C_in*K_h*K_w, L] = [1, 4, 4]
 # L 是输出空间位置数：2*2 = 4
@@ -708,7 +732,7 @@ y_cols = patches @ weight_flat.transpose(0, 1)
 
 y_again = y_cols.transpose(1, 2).reshape(1, 1, 2, 2)
 print(torch.equal(y, y_again))  # True
-~~~
+```
 
 这里发生了两层“看起来像 batch 的事情”：
 
@@ -787,7 +811,7 @@ $$
 
 PyTorch 里的对应写法非常直接：
 
-~~~python
+```python
 A = torch.tensor([
     [1.0, 1.0, 0.0],
     [1.0, 1.0, 1.0],
@@ -801,7 +825,7 @@ H = torch.tensor([
 ])                                  # [N, D] = [3, 2]
 
 H_next = A @ H                      # [3, 3] @ [3, 2] -> [3, 2]
-~~~
+```
 
 如果同时处理 $B$ 个大小相同的图，shape 可以写成
 
@@ -815,12 +839,12 @@ $$
 
 此时 $B$ 是 batch 轴，$N\times N$ 与 $N\times D$ 才是每个 batch slice 内的矩阵乘法。PyTorch 可以用
 
-~~~python
+```python
 A_batch = torch.randn(8, 100, 100)  # [B, N, N]
 H_batch = torch.randn(8, 100, 64)   # [B, N, D]
 H_next = torch.bmm(A_batch, H_batch)
 # [8, 100, 100] @ [8, 100, 64] -> [8, 100, 64]
-~~~
+```
 
 但一般 GNN 并不真的把图存成完整的 $N\times N$ 矩阵。真实图往往很稀疏：节点有 $N$ 个，边只有 $E$ 条，且 $E\ll N^2$。更通用的 message passing 写成
 
@@ -832,14 +856,14 @@ $$
 
 它的 data flow 是：
 
-~~~text
+```text
 edge list -> gather sender state -> compute each edge message
           -> aggregate messages at receiver -> update receiver state
-~~~
+```
 
 用 edge list 写一个最简单的“把 sender feature 相加”的版本：
 
-~~~python
+```python
 H = torch.tensor([
     [1.0,   0.0],
     [2.0,  10.0],
@@ -853,7 +877,7 @@ messages = H[src]                       # [E, D] = [4, 2]
 aggregated = torch.zeros_like(H)
 aggregated.index_add_(0, dst, messages)
 # [N, D]，把同一个 receiver 的 edge message 相加
-~~~
+```
 
 当 $\phi$ 只是取 sender state，且每条边的权重固定时，这个 scatter 过程才可以压缩成 $A H$。一旦 message 依赖 edge feature、receiver state，或者每条边都有由输入动态算出的 attention weight，就不能把它理解成一个固定的全局矩阵乘法。矩阵乘法是 data flow 的压缩记号；真正的本体是“谁把什么信息发给谁”。
 
@@ -1116,18 +1140,18 @@ einsum 是 Einstein summation notation 的工程化写法。它把“每个字�
 
 一个 equation 通常长这样：
 
-~~~text
+```text
 输入 1 的标签, 输入 2 的标签, ... -> 输出标签
         │                         │
         │                         └── 输出中出现的标签会被保留
         └── 同名标签表示要对齐；没有出现在输出中的标签会被求和
-~~~
+```
 
 以
 
-~~~text
+```text
 bhid,bhjd->bhij
-~~~
+```
 
 为例：
 
@@ -1151,46 +1175,46 @@ bhid,bhjd->bhij
 
 先用只有一条轴的向量把规则跑通。令
 
-~~~python
+```python
 x = torch.tensor([1.0, 2.0, 3.0])
 y = torch.tensor([10.0, 20.0, 30.0])
-~~~
+```
 
 向量点积写成：
 
-~~~python
+```python
 dot = torch.einsum("d,d->", x, y)
 # 1*10 + 2*20 + 3*30 = 140
 # 输出 shape 是 []，也就是 scalar
-~~~
+```
 
 标签 d 在两个输入中出现，表示对应位置相乘；右侧没有 d，表示乘完后沿 d 求和。若把 d 放进输出，就不再求和，而是得到逐元素乘法：
 
-~~~python
+```python
 elementwise = torch.einsum("d,d->d", x, y)
 # tensor([10., 40., 90.])
 # shape = [3]
-~~~
+```
 
 outer product 不共享标签：
 
-~~~python
+```python
 outer = torch.einsum("i,j->ij", x, y)
 # shape = [3, 3]
 # outer[i, j] = x[i] * y[j]
-~~~
+```
 
 这里 i 和 j 都出现在输出，所以它们都保留；没有 contraction。这个例子说明：einsum 里的“相乘”不一定意味着求和，是否求和取决于标签是否从输出中消失。
 
 矩阵乘法只是同样的规则再加一条轴。令 A 的 shape 为 [M,K]，B 的 shape 为 [K,N]：
 
-~~~python
+```python
 A = torch.randn(2, 3)
 B = torch.randn(3, 4)
 
 C = torch.einsum("ik,kj->ij", A, B)
 # [2, 3] 与 [3, 4] -> [2, 4]
-~~~
+```
 
 逐元素写出来：
 
@@ -1202,24 +1226,24 @@ $$
 
 k 在两个输入中出现、但不在输出中，所以是内维，也是被收缩的轴；i 和 j 被保留，形成输出的行列。这个 equation 与 A @ B 完全等价：
 
-~~~python
+```python
 torch.allclose(C, A @ B)  # True
-~~~
+```
 
 转置只是交换输出标签，不需要乘法：
 
-~~~python
+```python
 AT = torch.einsum("ij->ji", A)
 # [M, K] -> [K, M]
-~~~
+```
 
 对角线和 trace 也能用重复标签表达：
 
-~~~python
+```python
 M = torch.randn(4, 4)
 diagonal = torch.einsum("ii->i", M)  # 取主对角线，[4]
 trace = torch.einsum("ii->", M)      # 对角线再求和，scalar
-~~~
+```
 
 这里 ii 出现在同一个输入中，意思不是两个不同的轴相乘，而是选择两个轴上 index 相同的位置。它和“两个 operand 共享标签”的 contraction 是两种不同情况，写错时很容易把对角线误解成矩阵乘法。
 
@@ -1227,9 +1251,9 @@ trace = torch.einsum("ii->", M)      # 对角线再求和，scalar
 
 箭头右侧明确指定输出标签，推荐在教学和调试代码中始终写出来：
 
-~~~python
+```python
 C1 = torch.einsum("ik,kj->ij", A, B)
-~~~
+```
 
 如果省略箭头，PyTorch 会根据规则推断输出标签：只出现一次的标签被保留，并按字母顺序排列。简单例子通常没问题，但复杂 equation 中输出顺序不够直观，因此显式的 ->ij 更安全。
 
@@ -1237,21 +1261,21 @@ C1 = torch.einsum("ik,kj->ij", A, B)
 
 三个点表示“任意数量的前置轴”。例如：
 
-~~~python
+```python
 A = torch.randn(8, 2, 3)
 B = torch.randn(8, 3, 5)
 C = torch.einsum("...ik,...kj->...ij", A, B)
 # [8, 2, 3] 与 [8, 3, 5] -> [8, 2, 5]
-~~~
+```
 
 这里 ... 代表 batch-like 的 [8]，真正的矩阵轴仍是 ik 和 kj。若有多个前置 batch 轴，ellipsis 会一起代表它们：
 
-~~~python
+```python
 A = torch.randn(2, 4, 3, 5)
 B = torch.randn(2, 4, 5, 7)
 C = torch.einsum("...ik,...kj->...ij", A, B)
 # [2, 4, 3, 5] 与 [2, 4, 5, 7] -> [2, 4, 3, 7]
-~~~
+```
 
 因此 ...ik,...kj->...ij 可以看成“对任意 batch shape 做 batched matrix multiplication”。它和显式写 b、h 的版本表达同一个 contraction，但不要求你预先知道前面有几条 batch 轴。
 
@@ -1259,57 +1283,57 @@ C = torch.einsum("...ik,...kj->...ij", A, B)
 
 对 rank-3 的 batch matrix multiplication，写出 batch 标签即可：
 
-~~~python
+```python
 A = torch.randn(8, 2, 3)  # [B, M, K]
 B = torch.randn(8, 3, 4)  # [B, K, N]
 
 C = torch.einsum("bik,bkj->bij", A, B)
 # [B, M, K] 与 [B, K, N] -> [B, M, N]
-~~~
+```
 
 b 在输出中，所以每个 batch slice 独立计算；k 不在输出中，所以对内维 k 求和。这里 b 不是和另一个 b 做 dot product，它只是把第几个矩阵配对保留下来。
 
 CNN 的局部 patch 也可以写成 einsum。假设已经用 unfold 得到：
 
-~~~text
+```text
 patches: [B, L, P]       P = C_in * K_h * K_w
 weight:  [C_out, P]
-~~~
+```
 
 其中 L 是一张图片里的局部窗口数量，P 是每个窗口摊平后的长度。卷积的局部 dot product 是：
 
-~~~python
+```python
 y_cols = torch.einsum("blp,op->blo", patches, weight)
 # [B, L, P] 与 [C_out, P] -> [B, L, C_out]
-~~~
+```
 
 p 在两个输入中出现但没有出现在输出中，所以对 patch feature 求和；b、l、o 被保留。它和前面 4.2 节的 patches @ weight.T 是同一件事，只是 einsum 把“沿哪个轴收缩”写得更直接。
 
 GNN 的稠密 message passing：
 
-~~~python
+```python
 A = torch.randn(5, 5)       # [receiver_i, sender_j]
 H = torch.randn(5, 64)      # [sender_j, feature_d]
 
 H_next = torch.einsum("ij,jd->id", A, H)
 # [5, 5] 与 [5, 64] -> [5, 64]
-~~~
+```
 
 j 是 sender node 轴，被收缩；i 是 receiver node 轴，d 是 feature 轴，都保留。批量图则增加 b：
 
-~~~python
+```python
 A = torch.randn(8, 5, 5)    # [B, receiver_i, sender_j]
 H = torch.randn(8, 5, 64)   # [B, sender_j, feature_d]
 
 H_next = torch.einsum("bij,bjd->bid", A, H)
 # [8, 5, 5] 与 [8, 5, 64] -> [8, 5, 64]
-~~~
+```
 
 #### 7.3.4 Transformer attention：两个 contraction 轴
 
 Transformer 的 attention 正好展示了“同一组 tensor 先后沿不同标签收缩”：
 
-~~~python
+```python
 q = torch.randn(2, 4, 8, 16)  # [B, H, query_i, feature_d]
 k = torch.randn(2, 4, 8, 16)  # [B, H, key_j, feature_d]
 v = torch.randn(2, 4, 8, 16)  # [B, H, value_j, feature_d]
@@ -1324,7 +1348,7 @@ context = torch.einsum("bhij,bhjd->bhid", attention, v)
 # j 消失：按 attention 权重聚合 source/value position
 # [B, H, query_i, key_j] 与 [B, H, value_j, feature_d]
 # -> [B, H, query_i, feature_d]
-~~~
+```
 
 第一步的逐元素公式是
 
@@ -1357,10 +1381,10 @@ $$
 
 第二类错误是把本来应该保留的标签漏在箭头右边。例如：
 
-~~~python
+```python
 wrong = torch.einsum("bhid,bhjd->bhj", q, k)
 # i 被漏掉了，结果只保留 key_j，不再是完整的 query-key score table
-~~~
+```
 
 第三类错误是把 batch 标签漏掉，意外地让不同 batch 之间互相配对。例如 q 和 k 都是 [B,H,N,D]，写成 bhid,hjd->bhij 会把 q 的 b 轴省略在第二个 operand 中；这可能触发 broadcasting，也可能得到与预期不同的批处理语义。
 
@@ -1374,14 +1398,14 @@ wrong = torch.einsum("bhid,bhjd->bhj", q, k)
 
 einsum 不是“任何操作都比 @ 高级”。只有当轴语义复杂、需要多个 batch 轴或需要一次表达多个 contraction 时，它才明显更清楚。简单二维矩阵乘法使用 @ 往往更易读，也更容易让底层库使用专门优化的 GEMM kernel。调试时先用小 tensor 对比：
 
-~~~python
+```python
 left = torch.randn(2, 3)
 right = torch.randn(3, 4)
 
 by_einsum = torch.einsum("ik,kj->ij", left, right)
 by_matmul = left @ right
 print(torch.allclose(by_einsum, by_matmul))  # True
-~~~
+```
 
 #### 7.3.6 PyTorch 的 dim 是 axis 编号，不是 rank
 
@@ -1389,11 +1413,11 @@ print(torch.allclose(by_einsum, by_matmul))  # True
 
 例如：
 
-~~~python
+```python
 x = torch.zeros(2, 3, 4)
 print(x.shape)  # [2, 3, 4]
 print(x.ndim)   # 3，rank 是 3
-~~~
+```
 
 这个 tensor 有 3 个轴，但轴的编号是：
 
@@ -1417,13 +1441,13 @@ $$
 
 假设
 
-~~~python
+```python
 x = torch.tensor([
     [1.0, 2.0, 3.0],
     [4.0, 5.0, 6.0],
 ])
 # shape = [2, 3], rank = 2
-~~~
+```
 
 softmax(dim=-1) 等价于 softmax(dim=1)，会沿每一行的 3 个元素做归一化：
 
@@ -1455,10 +1479,10 @@ $$
 
 表示第 $i$ 个 query 对第 $j$ 个 key 的分数，那么标准写法是：
 
-~~~python
+```python
 attention = torch.softmax(scores, dim=-1)
 # [B, H, N, N]，最后一个 N 是 key/source position
-~~~
+```
 
 对应的公式是
 
@@ -1497,7 +1521,7 @@ dim 只是“轴的位置”；函数决定沿这条轴做什么。常见情况�
 
 例如，sum 的 dim 是 contraction 轴：
 
-~~~python
+```python
 x = torch.randn(2, 3, 4)
 
 y = x.sum(dim=-1)
@@ -1505,29 +1529,29 @@ print(y.shape)  # [2, 3]
 
 y_keep = x.sum(dim=-1, keepdim=True)
 print(y_keep.shape)  # [2, 3, 1]
-~~~
+```
 
 keepdim=True 很有用，因为后续 broadcast 仍然能看到原来的轴位置。它不是把 rank 恢复成原样的魔法，而是让被求和的轴留下来，只把 size 改成 1。
 
 cat 的 dim 不是求和轴，而是“沿哪条已有轴接长”：
 
-~~~python
+```python
 a = torch.randn(2, 3)
 b = torch.randn(2, 5)
 
 print(torch.cat([a, b], dim=1).shape)  # [2, 8]
 # dim=1：第二个轴接长，dim=0 的 size 必须相同
-~~~
+```
 
 stack 则是在指定位置创建新轴：
 
-~~~python
+```python
 a = torch.randn(2, 3)
 
 print(torch.stack([a, a], dim=0).shape)  # [2, 2, 3]
 print(torch.stack([a, a], dim=1).shape)  # [2, 2, 3]
 print(torch.stack([a, a], dim=2).shape)  # [2, 3, 2]
-~~~
+```
 
 这三个结果的数字总数相同，但新增的轴放置位置不同。cat 和 stack 都有 dim 参数，却都不是矩阵乘法，也不是 reduction。
 
@@ -1535,10 +1559,10 @@ print(torch.stack([a, a], dim=2).shape)  # [2, 3, 2]
 
 处理复杂 tensor 时，建议在代码旁边写一行轴账本：
 
-~~~text
+```text
 scores: [B, H, query_i, key_j]
                          └── dim=-1
-~~~
+```
 
 然后问三个问题：
 
@@ -1548,17 +1572,17 @@ scores: [B, H, query_i, key_j]
 
 对于 einsum，可以把同一套思路写成字母：
 
-~~~python
+```python
 # 沿 j 求和，等价于对 attention 的 source/key 轴做 sum
 row_sum = torch.einsum("bhij->bhi", attention)
 # [B, H, N, N] -> [B, H, N]
-~~~
+```
 
 这里 j 只出现在输入、没有出现在输出，所以它被求和；b、h、i 出现在输出，所以它们被保留。softmax 还多了一步 exponential 和除以总和，但“沿哪个轴处理”的判断方法完全相同。
 
 一句话总结：**rank 告诉你有几条轴，dim 告诉你要操作哪一条轴；dim=-1 只是“最后一条轴”，绝不是“rank”。**
 
-## 8. 同一个 tensor，在 CNN 和 Transformer 里怎样流动
+## 8. CNN、Transformer 与 attention 家族
 
 前面我们把矩阵乘法还原成了“很多个 dot product”。现在把镜头拉回两个真实模型：CNN 和 Transformer。它们都处理 tensor，也都大量使用乘法，但它们对“谁应该和谁相乘”的回答完全不同：
 
@@ -1569,10 +1593,10 @@ row_sum = torch.einsum("bhij->bhi", attention)
 
 一句话的直觉是：
 
-~~~text
+```text
 CNN:         “我只看附近，而且同一把尺子滑过所有位置。”
 Transformer: “我可以看全局，但先根据内容决定该听谁。”
-~~~
+```
 
 这不是“CNN 使用矩阵乘法、Transformer 不使用矩阵乘法”。两者都使用矩阵乘法；差别在于连接结构是预先固定的局部窗口，还是由当前输入动态生成的 attention 表。
 
@@ -1592,16 +1616,16 @@ $$
 
 valid convolution（深度学习框架通常实际计算 cross-correlation）会产生两个窗口：
 
-~~~text
+```text
 window 0: [0, 0, 1]  ->  -1*0 + 0*0 + 1*1 = 1
 window 1: [0, 1, 1]  ->  -1*0 + 0*1 + 1*1 = 1
-~~~
+```
 
 所以输出是 [1, 1]。每个输出位置都在做一个长度为 3 的 dot product；kernel 没有记住“这是第 0 个位置”或“这是第 1 个位置”，同一组 weights 被滑动复用。这就是 CNN 的 locality + weight sharing。
 
 PyTorch 代码把 shape 写得很明确：
 
-~~~python
+```python
 import torch
 import torch.nn.functional as F
 
@@ -1611,7 +1635,7 @@ kernel = torch.tensor([[[-1.0, 0.0, 1.0]]])  # [C_out, C_in, K] = [1, 1, 3]
 y = F.conv1d(x, kernel)
 print(y.shape)   # torch.Size([1, 1, 2])
 print(y[0, 0])   # tensor([1., 1.])
-~~~
+```
 
 注意 conv1d 的输入不是 [4]，而是 [B, C, L]。第一维告诉框架这是一个样本，第二维告诉它有几个输入 channels，第三维才是空间或时间位置。少掉 batch/channel 轴，有时会直接报错；放错轴，则可能得到一个形状看似合理、语义却错位的结果。
 
@@ -1619,13 +1643,13 @@ print(y[0, 0])   # tensor([1., 1.])
 
 一批 RGB 图像通常写成
 
-~~~text
+```text
 X: [B, C_in, H, W] = [2, 3, 32, 32]
-~~~
+```
 
 执行下面的卷积：
 
-~~~python
+```python
 import torch
 
 conv = torch.nn.Conv2d(
@@ -1641,7 +1665,7 @@ y = conv(x)
 print(conv.weight.shape)  # [8, 3, 3, 3]
 print(conv.bias.shape)    # [8]
 print(y.shape)            # [2, 8, 32, 32]
-~~~
+```
 
 conv.weight 的四条轴分别是 [C_out, C_in, K_h, K_w]。对某个 output channel、某个空间位置 (i, j)，计算可以写成：
 
@@ -1687,23 +1711,23 @@ $$
 
 把 9 个 2x2 patch 各自 flatten 成长度为 4 的 row，可以得到一个 patch matrix：
 
-~~~text
+```text
 patches: [9, 4]
 kernel:  [1, 4]
 
 patches @ kernel.T -> [9, 1]
 reshape(3, 3)      -> convolution output
-~~~
+```
 
 这就是经典的 im2col 视角：把局部窗口收集成一张大表，再用一次 dense matrix multiplication 批量完成 dot product。真实实现可能使用更专门的 CUDA kernel、implicit GEMM 或 Winograd 等优化，但 shape 契约没有变：
 
-~~~text
+```text
 每一行 patch [C_in*K_h*K_w]
         @
 每个 filter  [C_in*K_h*K_w]
         ↓
 一个 output response
-~~~
+```
 
 代价也由此可见：im2col 会复制重叠的像素，换取矩阵乘法库擅长的连续计算。卷积不是“没有矩阵乘法”，而是对矩阵乘法的连接模式施加了稀疏和共享约束。
 
@@ -1711,19 +1735,19 @@ reshape(3, 3)      -> convolution output
 
 Transformer 的输入通常是
 
-~~~text
+```text
 x: [B, N, D]
-~~~
+```
 
 B 是 batch size，N 是 token 数，D 是每个 token 的 representation width。比如两句话、每句四个 token、每个 token 八个 features：
 
-~~~text
+```text
 x: [2, 4, 8]
-~~~
+```
 
 可以把它想成两张表：每张表 4 行，每行 8 个数字。一个 Linear(8, 24) 对最后一个 feature 轴做投影，把每个 token 变成 3D=24 个数字，再拆成 Q、K、V：
 
-~~~python
+```python
 import torch
 from torch import nn
 
@@ -1734,7 +1758,7 @@ qkv = nn.Linear(D, 3 * D)(x)          # [2, 4, 24]
 qkv = qkv.reshape(B, N, 3, H, Dh)     # [2, 4, 3, 2, 4]
 q, k, v = qkv.permute(2, 0, 3, 1, 4)
                                       # each: [B, H, N, Dh] = [2, 2, 4, 4]
-~~~
+```
 
 这里 reshape 只重新分组，permute 才改变轴的顺序。最后每个 head 都拥有一张 [N, Dh] 的 token 表；不同 head 可以在不同的 feature 子空间里匹配 token。
 
@@ -1772,7 +1796,7 @@ $$
 
 把相似度变成每个 query 的路由权重。除以 $\sqrt{D_h}$ 是为了避免 feature 维度变大后 dot product 的数值过大，让 softmax 过早饱和。
 
-~~~python
+```python
 q = torch.tensor([[[[1.0, 0.0],
                     [0.0, 1.0],
                     [1.0, 1.0]]]])  # [B,H,N,Dh] = [1,1,3,2]
@@ -1788,7 +1812,7 @@ print(scores[0, 0])
 attention = (scores / (2 ** 0.5)).softmax(dim=-1)
 print(attention.sum(dim=-1))
 # every row is approximately tensor([1., 1., 1.])
-~~~
+```
 
 softmax(dim=-1) 沿最后一个 N 做：对每个 query，把它对所有 key 的权重归一化为 1。这里的最后一个 N 是“被读取的 key positions”，不是 batch，也不是 feature。
 
@@ -1796,11 +1820,11 @@ softmax(dim=-1) 沿最后一个 N 做：对每个 query，把它对所有 key �
 
 attention 有两次容易被混在一起的矩阵乘法：
 
-~~~text
+```text
 Q @ K.T  -> scores       “我应该听谁？”
 softmax  -> A            “每个候选人的权重是多少？”
 A @ V    -> context      “按这些权重，把谁说的话混合起来？”
-~~~
+```
 
 仍取三个 token，并令
 
@@ -1833,7 +1857,7 @@ $$
 
 第一行的第一维是 0.7*10 + 0.2*0 + 0.1*5 = 7.5。第一行主要读取第 0 个 token，所以结果更接近 V[0]；第二行主要读取第 1 个 token，所以第二维更接近 20。QK.T 负责产生连接表，AV 负责沿连接表搬运信息。两步都是矩阵乘法，但负责的语义不同。
 
-~~~python
+```python
 A = torch.tensor([
     [0.7, 0.2, 0.1],
     [0.1, 0.8, 0.1],
@@ -1850,28 +1874,28 @@ print(context)
 # tensor([[7.5000, 4.5000],
 #         [1.5000, 16.5000],
 #         [5.0000, 7.0000]])
-~~~
+```
 
 ### 8.7 同一张图，CNN 和 Transformer 的两种读法
 
 Vision Transformer（ViT）把图像切成 patch，再把 patch 当 token。假设输入是 [B, 3, 32, 32]，patch size 为 4：
 
-~~~text
+```text
 每个 patch: 3 * 4 * 4 = 48 个数字
 patch 数量: (32 / 4) * (32 / 4) = 64
 patch tensor: [B, 64, 48]
 linear embedding -> [B, 64, 128]
-~~~
+```
 
 从这里开始，Transformer 看到的是 64 个 token，而不是原来的二维像素网格：
 
-~~~text
+```text
 CNN:  [B, 3, 32, 32]
       └── local 3x3 / 5x5 windows, shared filters
 
 ViT:  [B, 64, 128]
       └── token pairs, QK.T creates a [64,64] routing table
-~~~
+```
 
 CNN 的一个 3x3 kernel 只和附近像素交互；ViT 的一个 token 在一层 self-attention 中原则上可以读取全部 64 个 token。CNN 的先验是“附近更相关、同一种局部模式可以平移复用”；Transformer 的先验更弱，但付出的代价是要计算 token-pair 表。
 
@@ -1896,11 +1920,11 @@ CNN 的一个 3x3 kernel 只和附近像素交互；ViT 的一个 token 在一�
 
 **题 1：卷积输出。**
 
-~~~python
+```python
 x = torch.randn(4, 3, 28, 28)
 conv = nn.Conv2d(3, 16, kernel_size=5, stride=2, padding=2)
 y = conv(x)
-~~~
+```
 
 输出 shape 是 [4, 16, 14, 14]。空间公式是
 
@@ -1915,11 +1939,11 @@ $$
 
 **题 2：attention score。**
 
-~~~python
+```python
 q = torch.randn(8, 4, 128, 32)
 k = torch.randn(8, 4, 128, 32)
 scores = q @ k.transpose(-2, -1)
-~~~
+```
 
 输出是 [8, 4, 128, 128]。32 被收缩，两个 128 分别留下 query 与 key positions。
 
@@ -1931,7 +1955,7 @@ scores = q @ k.transpose(-2, -1)
 
 ---
 
-## 8.10 Transformer attention 家族：从 self-attention 到 DeltaNet
+### 8.10 Transformer attention 家族：从 self-attention 到 DeltaNet
 
 前面的章节已经把 QKᵀ 和 AV 拆成了两个矩阵乘法，但还留下一个更实际的问题：这些 attention 机制到底有什么区别？self-attention、cross-attention、causal mask、KV cache、Grouped-Query Attention 和 DeltaNet 不在同一个抽象层级上。有些是在改变“谁可以看谁”，有些是在改变“哪些 head 共享 K/V”，有些只是推理时的缓存策略，还有一个则是用 recurrent linear attention 替代标准 softmax attention。
 
@@ -1960,7 +1984,7 @@ $$
 
 对应的 shape 流程是：
 
-~~~text
+```text
 Q: [B, H, N_query, d_h]
 K: [B, H, N_key,   d_h]
 V: [B, H, N_key,   d_h]
@@ -1969,11 +1993,11 @@ V: [B, H, N_key,   d_h]
                                  │
                                  └── softmax over key axis
                                      A @ V -> [B, H, N_query, d_h]
-~~~
+```
 
 后面所有变体都可以问四个问题：Q 来自哪里？K/V 来自哪里？哪些位置被 mask？K/V 是逐 token 缓存，还是压缩成一个 recurrent state？
 
-### 8.10.1 Self-attention：同一段序列内部互相读取
+#### 8.10.1 Self-attention：同一段序列内部互相读取
 
 self-attention 的关键不是“用了 Q、K、V”，而是三者都由同一个序列 X 产生：
 
@@ -1993,7 +2017,7 @@ $$
 
 PyTorch 中可以把核心计算写得很直白：
 
-~~~python
+```python
 import math
 import torch
 
@@ -2007,11 +2031,11 @@ scores = q @ k.transpose(-2, -1) / math.sqrt(q.size(-1))
 weights = torch.softmax(scores, dim=-1)
 output = weights @ v
 # [2, 4, 8, 8] @ [2, 4, 8, 16] -> [2, 4, 8, 16]
-~~~
+```
 
 这里的最后一个 $N$ 是 source/key position。softmax(dim=-1) 后，固定一个 query $(b,h,i)$，所有 source position $j$ 的权重之和为 1。self-attention 本身没有规定“能不能看未来”；双向 encoder 可以让每个 token 看完整序列，causal decoder 则要额外加下文的 mask。
 
-### 8.10.2 Cross-attention：Q 来自目标序列，K/V 来自另一段序列
+#### 8.10.2 Cross-attention：Q 来自目标序列，K/V 来自另一段序列
 
 cross-attention 的变化只有一个，但影响很大：query 和 key/value 不再来自同一段序列。设 source 序列是 $X_s$，target 或 decoder 序列是 $X_t$：
 
@@ -2036,15 +2060,15 @@ $$
 
 矩阵的每一行对应一个 target query，每一列对应一个 source token：
 
-~~~text
+```text
 target query 0  ──┐
 target query 1  ──┼── attend to source tokens 0 ... N_s-1
 target query 2  ──┘
-~~~
+```
 
 最小 PyTorch 例子：
 
-~~~python
+```python
 q = torch.randn(2, 4, 6, 16)  # decoder: [B, H, N_target, d_h]
 k = torch.randn(2, 4, 10, 16) # encoder:  [B, H, N_source, d_h]
 v = torch.randn(2, 4, 10, 16)
@@ -2055,11 +2079,11 @@ scores = q @ k.transpose(-2, -1)
 weights = torch.softmax(scores, dim=-1)
 context = weights @ v
 # [2, 4, 6, 10] @ [2, 4, 10, 16] -> [2, 4, 6, 16]
-~~~
+```
 
 这就是 encoder-decoder Transformer 中 decoder 读取 encoder 输出的方式，也可以用于 image-to-text：Q 来自文本 decoder，K/V 来自图像 patch。cross-attention 的 source 轴通常不是 causal 的，因为 source 整体已经给定；decoder 是否不能看未来，通常由它前面的 causal self-attention 保证。推理时，encoder 的 K/V 可以在开始时计算一次并复用，真正逐 token 增长的是 decoder self-attention 的 cache。
 
-### 8.10.3 Causal Transformer：用 mask 把未来挡住
+#### 8.10.3 Causal Transformer：用 mask 把未来挡住
 
 causal Transformer 不是另一种 Q/K/V 公式，而是给 self-attention 加了一个可见性约束：位置 $i$ 只能读取 $j\le i$ 的 token，不能读取未来 $j>i$。
 
@@ -2077,7 +2101,7 @@ $$
 
 代码中通常把不允许的位置填成负无穷：
 
-~~~python
+```python
 B, H, N, d_h = 2, 4, 6, 16
 q = torch.randn(B, H, N, d_h)
 k = torch.randn(B, H, N, d_h)
@@ -2089,46 +2113,46 @@ scores = scores.masked_fill(~allowed, float("-inf"))
 
 weights = torch.softmax(scores, dim=-1)
 output = weights @ v
-~~~
+```
 
 softmax 后，被填成负无穷的位置权重为 0，所以第 $i$ 行只会在前 $i+1$ 个 key 上分配概率。也可以把 padding mask 叠加进来：causal mask 负责时间方向，padding mask 负责无效 token，二者是不同约束。
 
 训练时，整段序列可以一次性并行计算：
 
-~~~text
+```text
 input:  [B, t0, t1, t2, t3]
 target: [   t1, t2, t3, t4, t5]
 mask:   每个位置只能看到自己和左边的位置
-~~~
+```
 
 因此训练不是一个 token 一个 token 地循环，但因果 mask 让每个位置看到的信息仍然和自回归生成一致。推理时没有未来 target，只能按 token 逐步生成。
 
-### 8.10.4 KV cache：缓存的是历史 K/V，不是另一种 attention
+#### 8.10.4 KV cache：缓存的是历史 K/V，不是另一种 attention
 
 KV cache 是 causal self-attention 的推理优化。它不改变 attention 的数学定义，只避免每生成一个新 token，就重新计算整个历史前缀的 K 和 V。
 
 假设已经生成到长度 $T$，下一步只输入一个新 token：
 
-~~~text
+```text
 q_new:       [B, H, 1, d_h]
 k_new/v_new: [B, H, 1, d_h]
 k_cache:     [B, H, T, d_h]
 v_cache:     [B, H, T, d_h]
-~~~
+```
 
 把当前 K/V 追加到 cache 后：
 
-~~~text
+```text
 k_all = concat(k_cache, k_new): [B, H, T+1, d_h]
 v_all = concat(v_cache, v_new): [B, H, T+1, d_h]
 
 q_new @ k_all.T -> [B, H, 1, T+1]
 weights @ v_all -> [B, H, 1, d_h]
-~~~
+```
 
 一个教学版实现如下：
 
-~~~python
+```python
 def causal_decode_step(q_new, k_new, v_new, k_cache=None, v_cache=None):
     # q_new/k_new/v_new: [B, H, 1, d_h]
     if k_cache is None:
@@ -2142,7 +2166,7 @@ def causal_decode_step(q_new, k_new, v_new, k_cache=None, v_cache=None):
     weights = torch.softmax(scores, dim=-1)
     out = weights @ v_all
     return out, k_all, v_all
-~~~
+```
 
 为什么不缓存 Q？因为历史 query 的输出已经算完，下一步只需要当前 token 的 query 去读取所有历史 K/V。为什么缓存 K/V？因为它们会被未来每一步重复读取。实际系统还会把 cache 按 layer、batch、head、sequence position 管理，并考虑 paged memory、beam search 和 sliding window。
 
@@ -2156,7 +2180,7 @@ KV cache 改善的是重复计算，不是把标准 attention 变成线性复杂
 
 所以 KV cache 的本质是“把历史 token 的 K/V 留下来”，不是“让每个 token 只看一个 token”。当前 query 仍然可以读取全部历史 key。
 
-### 8.10.5 Grouped-Query Attention：让多个 Q head 共享 K/V head
+#### 8.10.5 Grouped-Query Attention：让多个 Q head 共享 K/V head
 
 这里把你说的 group transformer 按大模型语境中最常见的含义理解为 Grouped-Query Attention（GQA）。它不是一个完整的 Transformer architecture，而是 multi-head attention 的 head-sharing 设计。
 
@@ -2174,10 +2198,10 @@ $$
 
 那么每个 K/V head 被 4 个 Q heads 共享：
 
-~~~text
+```text
 Q heads:  q0 q1 q2 q3 | q4 q5 q6 q7
 KV group: k0 k0 k0 k0 | k1 k1 k1 k1
-~~~
+```
 
 三种设计的对照：
 
@@ -2189,7 +2213,7 @@ KV group: k0 k0 k0 k0 | k1 k1 k1 k1
 
 教育版代码可以显式复制 K/V head：
 
-~~~python
+```python
 B, H_q, H_kv, N, d_h = 2, 8, 2, 16, 64
 q = torch.randn(B, H_q, N, d_h)
 k = torch.randn(B, H_kv, N, d_h)
@@ -2204,13 +2228,13 @@ weights = torch.softmax(scores / math.sqrt(d_h), dim=-1)
 out = weights @ v_for_q
 # scores: [B, H_q, N, N]
 # out:    [B, H_q, N, d_h]
-~~~
+```
 
 高性能 kernel 往往不会真的复制 K/V，而是在计算时根据 group 映射读取共享 head。GQA 的核心收益在 KV cache：相比 MHA，K/V cache 大约缩小为 $H_{KV}/H_Q$。上面的例子从 8 个 K/V heads 降到 2 个，缓存约为原来的四分之一。
 
 GQA 不会改变 causal mask 的方向，也不会改变 QK 的 contraction 轴。它可以和 self-attention、causal attention、KV cache 同时使用：self/causal 决定可见性，GQA 决定 head 如何共享，KV cache 决定推理时是否复用历史 K/V。
 
-### 8.10.6 DeltaNet：把“查表式 attention”改成带状态的 delta update
+#### 8.10.6 DeltaNet：把“查表式 attention”改成带状态的 delta update
 
 标准 causal attention 为每个 query 保存所有历史 K/V，因此可以精确地问：“哪个历史 key 最像我？”它的代价是 score table 的长度随序列增长。DeltaNet 属于 linear attention / recurrent attention 路线：不保存完整的历史 token 表，而是维护一个固定大小的状态矩阵。
 
@@ -2266,7 +2290,7 @@ $$
 
 一个单头、单 batch 的教学版循环：
 
-~~~python
+```python
 def deltanet_scan(q_seq, k_seq, v_seq, beta):
     # q_seq/k_seq/v_seq: [T, d]
     # beta: [T]，每个时间步的写入强度
@@ -2281,7 +2305,7 @@ def deltanet_scan(q_seq, k_seq, v_seq, beta):
         outputs.append(state @ q_seq[t])          # [d]
 
     return torch.stack(outputs), state
-~~~
+```
 
 这个示例是为了看清 data flow，不是生产级 fused DeltaNet kernel。真正的 DeltaNet 会加入 head 维度、投影、归一化以及并行或 chunkwise 训练算法。原始 DeltaNet 论文将它描述为使用 delta rule 的 linear Transformer；后续 Gated DeltaNet 又加入了更灵活的 gating。可参考 [DeltaNet 原论文](https://arxiv.org/abs/2406.06484) 和 [Gated DeltaNet 论文](https://arxiv.org/abs/2412.06464)。
 
@@ -2295,7 +2319,7 @@ DeltaNet 与 KV cache 的差别可以这样看：
 
 DeltaNet 的 recurrent 形式天然是 causal 的：$S_t$ 只由 $1,\ldots,t$ 的输入决定。训练时为了利用 GPU，通常会使用并行、chunkwise 或专门的 scan 算法；“推理时是 recurrent”不等于“训练只能用 Python for 循环”。
 
-### 8.10.7 把这些名字放回正确的层级
+#### 8.10.7 把这些名字放回正确的层级
 
 这几个概念不是六种互斥模型，而是不同维度的选择：
 
@@ -2310,28 +2334,28 @@ DeltaNet 的 recurrent 形式天然是 causal 的：$S_t$ 只由 $1,\ldots,t$ �
 
 一个 decoder-only LLM 的常见组合可能是：
 
-~~~text
+```text
 causal self-attention + GQA + KV cache
-~~~
+```
 
 一个 encoder-decoder 模型的 decoder block 可能是：
 
-~~~text
+```text
 causal self-attention
   -> cross-attention over encoder K/V
   -> MLP
-~~~
+```
 
 一个长上下文混合模型则可能在部分层使用：
 
-~~~text
+```text
 GQA causal attention
   <-> DeltaNet / gated linear attention
-~~~
+```
 
 最后用一张流程图收束：
 
-~~~text
+```text
 同一序列 X
   └─ self-attention：      Q,K,V 都来自 X
 
@@ -2349,7 +2373,7 @@ GQA
 
 DeltaNet
   └─ 更新 recurrent state：不保留完整历史 token 表
-~~~
+```
 
 看到一个具体实现时，可以按这个顺序读：先确认它是 self 还是 cross，再看有没有 causal mask；接着看 Q/K/V head 数是否相同，判断是不是 GQA；最后看 inference state 是逐 token 的 K/V cache，还是固定大小的 recurrent state。这样就不会把“attention 连接方式”“head 压缩方式”“推理缓存方式”和“替代 attention 的新算子”混成一个名词。
 
@@ -2357,7 +2381,7 @@ DeltaNet
 
 前面的例子一直在追踪 forward：输入 tensor 经过几次线性或局部/全局混合，最后变成 prediction。训练还缺一半：模型怎样知道 prediction 好不好，怎样把错误传回参数，怎样在下一轮使用更新后的参数。MLP、CNN、Transformer 的 architecture 不同，但一轮 supervised training 的骨架高度相同：
 
-~~~text
+```text
 Dataset
   │  (x, y)
   ▼
@@ -2375,7 +2399,7 @@ model.train()
 
 每个 epoch 结束后：
 model.eval() + no_grad() -> validation metrics
-~~~
+```
 
 这条流水线里每个部件各自拥有一份责任：
 
@@ -2392,7 +2416,7 @@ model.eval() + no_grad() -> validation metrics
 
 先写一个只处理“每个样本一个类别标签”的 helper。MLP 和 CNN 都可以共用它：
 
-~~~python
+```python
 import torch
 from torch import nn
 
@@ -2437,7 +2461,7 @@ def evaluate(model, loader, loss_fn, device="cpu"):
         total_items += batch_size
 
     return total_loss / total_items, total_correct / total_items
-~~~
+```
 
 这里有三个容易漏掉的动作：
 
@@ -2453,7 +2477,7 @@ def evaluate(model, loader, loss_fn, device="cpu"):
 
 先做一个没有图像和序列结构的任务。数据是三个二维高斯 blob；每个样本只有两个 features，所以 MLP 的输入 shape 是 [B, 2]。
 
-~~~python
+```python
 from torch.utils.data import DataLoader, TensorDataset
 
 def make_blobs(n, seed):
@@ -2505,18 +2529,18 @@ for epoch in range(20):
             val_loss,
             val_acc,
         )
-~~~
+```
 
 shape 追踪是：
 
-~~~text
+```text
 xb       [B, 2]
 Linear   [B, 32]
 ReLU    [B, 32]
 Linear   [B, 3]    logits for 3 classes
 target   [B]       integer class IDs: 0, 1, or 2
 loss     []        one scalar
-~~~
+```
 
 这个例子里，MLP 不需要知道二维点的“附近”在原始数据中意味着什么。它只看到两个 feature，并通过全连接矩阵学习一条分类边界。若把 features 的量纲改得极不平衡，例如第一列在百万级、第二列在小数级，优化会更难；实际任务通常会在 Dataset 或 preprocessing 阶段做标准化。
 
@@ -2534,7 +2558,7 @@ $$
 
 现在把输入换成图像。为了让示例离线可运行，我们造两类 16x16 单通道图片：class 0 中间有一条竖条，class 1 中间有一条横条，再加一点噪声。任务的关键不是数据集，而是输入 shape 和 CNN 如何保留局部空间结构。
 
-~~~python
+```python
 def make_bars(n, seed):
     generator = torch.Generator().manual_seed(seed)
     images = 0.15 * torch.randn(
@@ -2580,11 +2604,11 @@ for epoch in range(8):
     )
     val_loss, val_acc = evaluate(cnn, val_loader, loss_fn)
     print(epoch + 1, train_loss, train_acc, val_loss, val_acc)
-~~~
+```
 
 shape 追踪：
 
-~~~text
+```text
 xb                         [B, 1, 16, 16]
 Conv2d(1, 8, 3, padding=1) [B, 8, 16, 16]
 MaxPool2d(2)                [B, 8, 8, 8]
@@ -2593,7 +2617,7 @@ AdaptiveAvgPool2d(1)        [B, 16, 1, 1]
 Flatten                     [B, 16]
 Linear                      [B, 2]       logits
 target                      [B]
-~~~
+```
 
 CNN 比 MLP 多了一条重要的 architecture 约束：3x3 kernel 先看局部邻域，同一组 weights 在整张图上滑动。于是竖条无论出现在左边还是右边，都可以被同一类 line detector 捕捉。MaxPool 和 stride 逐步压缩空间尺寸，换来更大的 effective receptive field 与更低的计算量。
 
@@ -2603,15 +2627,15 @@ CNN 比 MLP 多了一条重要的 architecture 约束：3x3 kernel 先看局部�
 
 Transformer 的常见训练目标不是“整句话一个 label”，而是每个位置预测下一个 token。输入与 target 错开一格：
 
-~~~text
+```text
 tokens:  [t0, t1, t2, t3, t4]
 input:   [t0, t1, t2, t3]
 target:  [t1, t2, t3, t4]
-~~~
+```
 
 下面构造一个简单规律：词表中的下一个 token 总是当前 token 加 1（模 10）。模型没有见过某个具体序列，也必须从上下文和位置中学会这个 transition。
 
-~~~python
+```python
 import torch.nn.functional as F
 
 def make_incrementing_sequences(n, seq_len, vocab_size, seed):
@@ -2706,11 +2730,11 @@ for epoch in range(10):
         predictions = logits.argmax(dim=-1)
         accuracy = (predictions == target_ids).float().mean()
     print(epoch + 1, total_loss / total_tokens, accuracy.item())
-~~~
+```
 
 这里的 shape 与 MLP/CNN 有一个本质差别：
 
-~~~text
+```text
 input_ids                   [B, N]
 token embedding             [B, N, D]
 Q, K, V per head             [B, H, N, Dh]
@@ -2719,18 +2743,18 @@ attention @ V                [B, H, N, Dh]
 lm_head                      [B, N, vocab_size]
 target_ids                   [B, N]
 flatten for CrossEntropy     [B*N, vocab_size] vs [B*N]
-~~~
+```
 
 最后的 flatten 不是为了改变语义，而是把“每个 batch、每个 token 都是一个分类位置”交给 CrossEntropyLoss。causal mask 则保证位置 i 不能读取未来位置 i+1 之后的 token；否则训练时模型会偷看答案，loss 看起来很漂亮，推理却会崩。
 
 训练完成后，给一个 prefix 逐步生成：
 
-~~~python
+```python
 prefix = torch.tensor([[3, 4, 5]])
 with torch.no_grad():
     next_token = lm(prefix)[:, -1].argmax(dim=-1)
 print(next_token)   # 这个合成任务中应接近 tensor([6])
-~~~
+```
 
 ### 9.5 三种训练流程放在一张表里
 
@@ -2920,7 +2944,9 @@ y = layer(x)
 
 ---
 
-## 14. 合上这篇，留下一个可复用的 mental model
+## 14. 主线小结：先闭环，再进入专题
+
+到这里，本文的主线已经闭环：先从 tensor 和 dot product 出发，再经过 Linear、CNN、Transformer、训练流程、性能和迁移练习。下一节的第 15 章是一个可以独立阅读的专题篇，专门解释 PyTorch 为什么把 Linear 的 weight 存成 [D_out, D_in]；它不是前面小节的漏编号，而是对 W 的一次纵向深挖。
 
 把神经网络里的 tensor 想成“带标签的数字表”：shape 告诉你有几条轴，轴语义告诉你每条轴代表 batch、feature、channel、token 还是 node。
 
@@ -2940,13 +2966,889 @@ y = layer(x)
 
 把它们放回训练循环再看一遍：MLP 把 [B,D] 变成每个样本的 logits；CNN 在 [B,C,H,W] 上用共享局部 kernel 提取空间证据；Transformer 在 [B,N,D] 上先用 QK.T 决定信息从哪里来，再用 A V 混合内容。三者都经历同一条闭环：
 
-~~~text
+```text
 数据 batch
   → forward 得到 logits
   → loss 把 logits 与 target 对齐成一个 scalar
   → backward 沿计算图传 gradient
   → optimizer 更新 parameters
   → validation 检查下一轮是否真的更好
-~~~
+```
 
 所以真正需要牢牢记住的不是某个模型的代码模板，而是两个契约：shape 契约决定计算能否正确连接，训练契约决定错误能否沿计算图回到参数。换 architecture，只是换了中间的 tensor 结构和连接偏好；这两个契约仍然在场。
+
+---
+
+## 15. 为什么 PyTorch 的 W 是 [D_out, D_in]：矩阵的多种视角
+
+前面多次写过：
+
+$$
+Y=XW^\mathsf{T}+b,
+$$
+
+其中
+
+$$
+X:[B,D_{\mathrm{in}}],
+\qquad
+W:[D_{\mathrm{out}},D_{\mathrm{in}}],
+\qquad
+b:[D_{\mathrm{out}}],
+\qquad
+Y:[B,D_{\mathrm{out}}].
+$$
+
+很多人第一次看到 PyTorch 的 weight 都会问：既然输入有 $D_{\mathrm{in}}$ 个 feature、输出有 $D_{\mathrm{out}}$ 个 feature，为什么 W 不直接写成 $[D_{\mathrm{in}},D_{\mathrm{out}}]$？答案先放在最前面：
+
+> **[D_out, D_in] 不是唯一正确的矩阵排布，而是 PyTorch 选择的参数 convention。它让 W 的每一行对应一个 output neuron，同时也正好符合列向量写法 $y=Wx$。由于 PyTorch 的 batch 输入通常把每个样本放在一行，所以 forward 写成 $XW^\mathsf{T}$。**
+
+如果你采用另一种 convention，当然也可以把参数存成 $[D_{\mathrm{in}},D_{\mathrm{out}}]$，然后写 $XW$。数学没有禁止它；只是那时你没有遵循 PyTorch 的 nn.Linear 参数契约。
+
+这一章不只回答“为什么是这个 shape”，还把矩阵在神经网络里最有用的几种视角串起来。看到一个矩阵时，可以把它同时看成一张表、一个线性函数、若干个 neuron 的权重集合、若干个 basis vector 的去向、一个几何变换、一个 batch operator，甚至是一张反向传播中的梯度账本。
+
+### 15.1 先锁定一个最小例子
+
+设每个样本有 3 个输入 feature，线性层产生 2 个输出 feature：
+
+$$
+D_{\mathrm{in}}=3,\qquad D_{\mathrm{out}}=2.
+$$
+
+取
+
+$$
+W=
+\begin{bmatrix}
+10&20&30\\
+40&50&60
+\end{bmatrix},
+\qquad
+b=
+\begin{bmatrix}
+100\\
+200
+\end{bmatrix}.
+$$
+
+W 的 shape 是 $[2,3]$。输入一个 row vector：
+
+$$
+x=
+\begin{bmatrix}
+1&2&3
+\end{bmatrix}.
+$$
+
+PyTorch 的计算是
+
+$$
+xW^\mathsf{T}+b
+=
+\begin{bmatrix}
+1&2&3
+\end{bmatrix}
+\begin{bmatrix}
+10&40\\
+20&50\\
+30&60
+\end{bmatrix}
++
+\begin{bmatrix}
+100&200
+\end{bmatrix}
+=
+\begin{bmatrix}
+240&520
+\end{bmatrix}.
+$$
+
+逐个 output 写出来更直观：
+
+$$
+y_0=1\cdot10+2\cdot20+3\cdot30+100=240,
+$$
+
+$$
+y_1=1\cdot40+2\cdot50+3\cdot60+200=520.
+$$
+
+W 的第一行只负责 $y_0$，第二行只负责 $y_1$。这已经暴露了 PyTorch 选择 $[D_{\mathrm{out}},D_{\mathrm{in}}]$ 的第一层原因：**输出有几个 neuron，W 就有几行；每一行放这个 neuron 看待全部输入 feature 的权重。**
+
+用 PyTorch 验证：
+
+```python
+import torch
+from torch import nn
+
+x = torch.tensor([[1.0, 2.0, 3.0]])  # [B, D_in] = [1, 3]
+W = torch.tensor([
+    [10.0, 20.0, 30.0],               # output neuron 0
+    [40.0, 50.0, 60.0],               # output neuron 1
+])                                   # [D_out, D_in] = [2, 3]
+b = torch.tensor([100.0, 200.0])     # [D_out] = [2]
+
+y = x @ W.T + b
+print(y)                             # tensor([[240., 520.]])
+```
+
+### 15.2 从“一个 neuron”推导出 W 的行
+
+不要先背矩阵 shape，先问一个 neuron 需要什么。
+
+一个 neuron 要接收 $D_{\mathrm{in}}$ 个输入 feature，因此它需要 $D_{\mathrm{in}}$ 个 weight：
+
+$$
+w_o=
+\begin{bmatrix}
+w_{o,1}&w_{o,2}&\cdots&w_{o,D_{\mathrm{in}}}
+\end{bmatrix}.
+$$
+
+它产生一个 scalar：
+
+$$
+y_o=w_o x+b_o.
+$$
+
+如果有 $D_{\mathrm{out}}$ 个 output neuron，就把这 $D_{\mathrm{out}}$ 组权重堆起来：
+
+$$
+W=
+\begin{bmatrix}
+w_0\\
+w_1\\
+\vdots\\
+w_{D_{\mathrm{out}}-1}
+\end{bmatrix}
+\in\mathbb{R}^{D_{\mathrm{out}}\times D_{\mathrm{in}}}.
+$$
+
+对列向量 $x\in\mathbb{R}^{D_{\mathrm{in}}\times1}$：
+
+$$
+y=Wx+b,
+\qquad
+y\in\mathbb{R}^{D_{\mathrm{out}}\times1}.
+$$
+
+矩阵乘法的第 $o$ 行正好是 $w_o x$，因此第 $o$ 行对应第 $o$ 个输出。bias 也自然是 $[D_{\mathrm{out}}]$：每个 output neuron 有一个自己的偏置。
+
+这比从“矩阵乘法要求内维相等”倒推更有解释力。shape 规则只是结果；真正的压力来自网络结构：**要从 $D_{\mathrm{in}}$ 个输入数字产生 $D_{\mathrm{out}}$ 个独立输出数字，就需要 $D_{\mathrm{out}}$ 个长度为 $D_{\mathrm{in}}$ 的加权汇总器。**
+
+可以把数据流画成：
+
+```text
+one input sample x: [D_in]
+        │
+        ├── dot with W row 0 -> output y[0]
+        ├── dot with W row 1 -> output y[1]
+        ├── ...
+        └── dot with W row D_out-1 -> output y[D_out-1]
+
+W: [D_out, D_in]
+    └── one row per output neuron
+```
+
+### 15.3 两种向量约定：为什么一个人写 W，另一个人写 W.T
+
+很多“W 到底应该是 [in,out] 还是 [out,in]”的争论，根源不是数学冲突，而是大家把向量摆放方向混在了一起。
+
+#### 15.3.1 列向量 convention：W 直接作用在 x 左边
+
+数学教材常把一个样本写成列向量：
+
+$$
+x_{\mathrm{col}}\in\mathbb{R}^{D_{\mathrm{in}}\times1}.
+$$
+
+此时最自然的线性映射是
+
+$$
+y_{\mathrm{col}}=W x_{\mathrm{col}}+b_{\mathrm{col}},
+$$
+
+所以 W 必须是
+
+$$
+[D_{\mathrm{out}},D_{\mathrm{in}}].
+$$
+
+因为
+
+$$
+[D_{\mathrm{out}},D_{\mathrm{in}}]
+[D_{\mathrm{in}},1]
+\to
+[D_{\mathrm{out}},1].
+$$
+
+#### 15.3.2 行向量 convention：PyTorch batch 把样本放在行里
+
+工程代码通常把一个 batch 写成：
+
+$$
+X_{\mathrm{row}}\in\mathbb{R}^{B\times D_{\mathrm{in}}},
+$$
+
+每一行是一个样本。为了让输出仍然是一行一个样本：
+
+$$
+Y_{\mathrm{row}}
+=
+X_{\mathrm{row}}W^\mathsf{T}
++
+b.
+$$
+
+shape 是
+
+$$
+[B,D_{\mathrm{in}}]
+[D_{\mathrm{in}},D_{\mathrm{out}}]
+\to
+[B,D_{\mathrm{out}}].
+$$
+
+注意这里真正参与右乘的是 $W^\mathsf{T}$，它的 shape 才是 $[D_{\mathrm{in}},D_{\mathrm{out}}]$。PyTorch 只是把参数本体 W 存成转置前的 $[D_{\mathrm{out}},D_{\mathrm{in}}]$，因此代码里看到了 .T。
+
+同一个计算用两种写法表示：
+
+```python
+x_col = torch.tensor([[1.0], [2.0], [3.0]])  # [D_in, 1]
+x_row = x_col.T                             # [1, D_in]
+
+W = torch.tensor([
+    [10.0, 20.0, 30.0],
+    [40.0, 50.0, 60.0],
+])                                           # [D_out, D_in]
+
+y_col = W @ x_col                           # [D_out, 1]
+y_row = x_row @ W.T                         # [1, D_out]
+
+print(y_col.T.equal(y_row))                 # True
+```
+
+因此：
+
+| 视角 | 样本摆放 | 公式 | weight shape |
+|---|---|---|---|
+| column-vector math | 每个样本是 $[D_{\mathrm{in}},1]$ | $y=Wx+b$ | $[D_{\mathrm{out}},D_{\mathrm{in}}]$ |
+| row-vector batch code | 每个样本是 $[1,D_{\mathrm{in}}]$ | $y=xW^\mathsf{T}+b$ | 参数仍存为 $[D_{\mathrm{out}},D_{\mathrm{in}}]$ |
+| alternative parameter convention | 每个样本是 row | $y=xA+b$ | $A:[D_{\mathrm{in}},D_{\mathrm{out}}]$ |
+
+最后一行也完全成立：
+
+```python
+A = W.T                                      # [D_in, D_out]
+y_alternative = x_row @ A                    # [1, D_out]
+print(y_alternative.equal(y_row))             # True
+```
+
+所以不能说 $[D_{\mathrm{in}},D_{\mathrm{out}}]$ 是错的。准确说法是：**它是另一种 parameter convention；PyTorch 的 nn.Linear 选择了相反的存储 convention。**
+
+### 15.4 矩阵视角一：它是一张带语义的数字表
+
+最朴素的视角是把 W 看成表格：
+
+$$
+W_{o,i}
+$$
+
+表示“输入 feature $i$ 对 output feature $o$ 的 weight”。行和列不是空洞的编号，而是两个角色：
+
+| 位置 | 语义 |
+|---|---|
+| 行 $o$ | 哪一个 output neuron |
+| 列 $i$ | 读哪一个 input feature |
+| 单元格 $W_{o,i}$ | 这个 input 对这个 output 的影响强度 |
+
+在最小例子中：
+
+$$
+W_{1,2}=60
+$$
+
+表示第二个 output neuron 读取第三个 input feature 时使用权重 60。索引从 0 开始的代码写法是 W[1, 2]。
+
+这个视角适合排查 shape 和语义错误。若你看到一个 weight 的第一维是 2、第二维是 3，就问：“是 2 个输出各自读取 3 个输入，还是 3 个输入各自连接 2 个输出？”数字本身不能回答，参数 convention 才能回答。
+
+### 15.5 矩阵视角二：它是很多个 output neuron 的权重集合
+
+把 W 按行拆开：
+
+$$
+W=
+\begin{bmatrix}
+\text{weights of output 0}\\
+\text{weights of output 1}\\
+\vdots\\
+\text{weights of output }D_{\mathrm{out}}-1
+\end{bmatrix}.
+$$
+
+于是
+
+$$
+y_o=W_{o,:}x+b_o.
+$$
+
+这也是最贴近 MLP 的视角。每一行都可以单独拿出来做一个 neuron：
+
+```python
+x = torch.tensor([1.0, 2.0, 3.0])
+W = torch.tensor([
+    [10.0, 20.0, 30.0],
+    [40.0, 50.0, 60.0],
+])
+b = torch.tensor([100.0, 200.0])
+
+y0 = W[0] @ x + b[0]
+y1 = W[1] @ x + b[1]
+y = W @ x + b
+
+print(y0, y1)            # tensor(240.) tensor(520.)
+print(torch.stack([y0, y1]).equal(y))  # True
+```
+
+矩阵乘法只是把“逐个 neuron 计算”打包成一次 kernel。GPU 并没有改变这个语义；它只是同时算很多行和很多样本。
+
+### 15.6 矩阵视角三：它是一个线性映射
+
+不要把 W 只看成参数表。更抽象地，W 是一个函数：
+
+$$
+W:\mathbb{R}^{D_{\mathrm{in}}}\to\mathbb{R}^{D_{\mathrm{out}}}.
+$$
+
+它接收一个 $D_{\mathrm{in}}$ 维向量，输出一个 $D_{\mathrm{out}}$ 维向量。若加入 bias：
+
+$$
+f(x)=Wx+b
+$$
+
+严格来说这是 affine map（仿射映射），不是纯 linear map；当 $b=0$ 时才是线性映射。
+
+在这个视角下，shape 的含义不是“表格有几行几列”，而是：
+
+$$
+\underbrace{\mathbb{R}^{D_{\mathrm{in}}}}_{\text{输入空间}}
+\xrightarrow{\quad W\quad}
+\underbrace{\mathbb{R}^{D_{\mathrm{out}}}}_{\text{输出空间}}.
+$$
+
+这立刻解释了为什么第一维是 D_out、第二维是 D_in：矩阵的行数是值域维度，列数是定义域维度。一个 $2\times3$ 的 W 把三维输入映射到二维输出；把它写成 $3\times2$，默认就变成了把二维输入映射到三维输出，除非你同时改变乘法方向或转置约定。
+
+### 15.7 矩阵视角四：W 的列是 input basis 的去向
+
+这是最有几何味道、也最容易被忽略的视角。设输入空间的标准 basis 是
+
+$$
+e_1=
+\begin{bmatrix}1\\0\\ \vdots\\0\end{bmatrix},
+\quad
+e_2=
+\begin{bmatrix}0\\1\\ \vdots\\0\end{bmatrix},
+\quad \ldots
+$$
+
+W 作用在第 $i$ 个 basis 上：
+
+$$
+We_i=W_{:,i}.
+$$
+
+也就是说，W 的第 $i$ 列就是输入 basis $e_i$ 被映射到输出空间后的坐标。
+
+对前面的 W：
+
+$$
+W=
+\begin{bmatrix}
+10&20&30\\
+40&50&60
+\end{bmatrix},
+$$
+
+有
+
+$$
+We_1=
+\begin{bmatrix}10\\40\end{bmatrix},
+\qquad
+We_2=
+\begin{bmatrix}20\\50\end{bmatrix},
+\qquad
+We_3=
+\begin{bmatrix}30\\60\end{bmatrix}.
+$$
+
+任意输入都可以写成 basis 的线性组合：
+
+$$
+x=x_1e_1+x_2e_2+x_3e_3.
+$$
+
+因此
+
+$$
+Wx=x_1We_1+x_2We_2+x_3We_3.
+$$
+
+这句话的直觉是：输入的每个 coordinate 都拿着自己的系数，去缩放一根“输入 basis 的去向”，最后把所有去向相加。矩阵的列视角回答的是“每个 input feature 会把信息送到哪些 output feature”；矩阵的行视角回答的是“每个 output neuron 会从哪些 input feature 收信息”。
+
+### 15.8 矩阵视角五：它是几何变换的坐标规则
+
+对二维输入，W 可以改变平面上的点、线和方向：
+
+| W 的结构 | 几何效果 |
+|---|---|
+| 对角矩阵 | 各坐标轴独立缩放 |
+| 正交矩阵 | rotation 或 reflection，长度和角度保持 |
+| 非零非对角项 | 一个坐标混入另一个坐标，常表现为 shear 或 rotation + scale |
+| rank 小于输入/输出维度 | 把空间压到更低维的子空间，存在信息丢失 |
+| 可逆方阵 | 可把输入空间一一变换到输出空间 |
+
+例如：
+
+$$
+R=
+\begin{bmatrix}
+0&-1\\
+1&0
+\end{bmatrix}
+$$
+
+把 $(1,0)$ 变成 $(0,1)$，把 $(0,1)$ 变成 $(-1,0)$，也就是逆时针旋转 90 度。
+
+而
+
+$$
+P=
+\begin{bmatrix}
+1&0\\
+0&0
+\end{bmatrix}
+$$
+
+把所有点投影到 x 轴。它的输入和输出都是二维，但第二个输出坐标永远为 0；这说明“shape 相同”不代表信息没有损失。
+
+在神经网络里，linear layer 通常不追求把输入图形做一个可解释的旋转。它学的是对任务有用的坐标系：某些方向可能代表边缘、颜色组合、词法模式或 attention feature。几何视角帮助我们理解“线性层是在重新组织空间”，但不要把每个训练出的 W 机械解释成一个简单旋转。
+
+### 15.9 矩阵视角六：每个输出是一个 dot product / readout
+
+W 的每一行都可以看成一个 detector。输入 x 与第 o 行越 aligned：
+
+$$
+W_{o,:}x
+$$
+
+就越大。若先把行向量归一化，这个值和 cosine similarity 有直接关系：
+
+$$
+\frac{W_{o,:}}{\|W_{o,:}\|}
+\cdot
+\frac{x}{\|x\|}.
+$$
+
+这也是分类层的一个直觉：最后一层的每个 output row 可以学习一个“类别方向”，logit 衡量输入在这个方向上的响应，再由 softmax 把 logits 变成类别概率。
+
+例如二分类 logits：
+
+```python
+x = torch.tensor([[2.0, 1.0]])      # [B, D_in] = [1, 2]
+W = torch.tensor([
+    [1.0, 0.0],                     # class 0 detector
+    [0.0, 2.0],                     # class 1 detector
+])                                  # [2, 2]
+b = torch.zeros(2)
+
+logits = x @ W.T + b                # [1, 2] = [[2, 2]]
+prob = torch.softmax(logits, dim=-1)
+```
+
+这里两个 class detector 对输入的 response 一样，所以概率相同。训练会调整 W 的行和 bias，使正确类别的 row 对目标输入产生更大的 logit。
+
+### 15.10 矩阵视角七：它是一个 batch operator，而不是每个样本一套 W
+
+真实训练通常不是一个 x，而是一个 batch：
+
+$$
+X=
+\begin{bmatrix}
+x_1^\mathsf{T}\\
+x_2^\mathsf{T}\\
+\vdots\\
+x_B^\mathsf{T}
+\end{bmatrix}
+\in\mathbb{R}^{B\times D_{\mathrm{in}}}.
+$$
+
+一次计算：
+
+$$
+Y=XW^\mathsf{T}+b
+\in\mathbb{R}^{B\times D_{\mathrm{out}}}.
+$$
+
+展开第 b 行：
+
+$$
+Y_{b,:}=X_{b,:}W^\mathsf{T}+b.
+$$
+
+所以 batch 维 B 不是 W 的一部分，也没有参与 dot product。W 只描述“一个样本如何从输入空间映射到输出空间”，然后同一套 W 被复用给所有样本。这个 weight sharing 正是神经网络能从很多样本中学习共同规律的原因。
+
+PyTorch 的输入还可以有多个 leading dimensions。比如 Transformer 中：
+
+```python
+x = torch.randn(2, 8, 32)          # [B, N, D_in]
+layer = nn.Linear(32, 64)
+y = layer(x)
+print(layer.weight.shape)          # [64, 32]
+print(y.shape)                     # [2, 8, 64]
+```
+
+这里 nn.Linear 只把最后一条轴 32 映射到 64；前面的 [B,N] 被当成 batch-like leading dimensions 并行处理。等价的 shape 记号是
+
+$$
+[B,N,D_{\mathrm{in}}]
+\,[D_{\mathrm{out}},D_{\mathrm{in}}]^\mathsf{T}
+\to
+[B,N,D_{\mathrm{out}}].
+$$
+
+### 15.11 矩阵视角八：它是线性层的参数表，也是一个可学习的接口契约
+
+调用
+
+```python
+layer = nn.Linear(in_features=3, out_features=2)
+```
+
+实际上声明了四件事：
+
+1. 输入最后一维必须是 3；
+2. 输出最后一维会是 2；
+3. weight 的参数 shape 是 [2, 3]；
+4. bias 的 shape 是 [2]。
+
+因此 [D_out,D_in] 不是一个只影响内部实现的细节，它参与了 module 的输入输出契约。若写成：
+
+```python
+layer = nn.Linear(3, 2)
+x = torch.randn(5, 4)
+y = layer(x)
+```
+
+错误不是“矩阵乘法 API 不聪明”，而是 x 的最后一维 4 和 layer 宣布的 input feature 数 3 不一致。正确修复是确认上游表示的真实语义，然后改变 layer 的 in_features 或上游投影；不要随手 reshape 让数字凑数。
+
+如果手动实现 alternative convention：
+
+```python
+class RowLinear(nn.Module):
+    def __init__(self, d_in, d_out):
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(d_in, d_out))
+        self.bias = nn.Parameter(torch.zeros(d_out))
+
+    def forward(self, x):
+        return x @ self.weight + self.bias
+```
+
+这也能工作，但它与 nn.Linear 的参数 shape 不同。加载 checkpoint、复制权重、写初始化和比较梯度时，必须明确两者是否互为转置。
+
+### 15.12 矩阵视角九：两层线性层是矩阵的函数复合
+
+假设第一层和第二层分别是：
+
+$$
+W_1\in\mathbb{R}^{D_1\times D_0},
+\qquad
+W_2\in\mathbb{R}^{D_2\times D_1}.
+$$
+
+列向量写法是：
+
+$$
+x
+\xrightarrow{W_1}
+h=W_1x
+\xrightarrow{W_2}
+y=W_2h=W_2W_1x.
+$$
+
+所以矩阵乘法的顺序是“后发生的映射写在左边”。这也是 composition 视角：
+
+```text
+input space D0 --W1--> hidden space D1 --W2--> output space D2
+                         └── W2 depends on W1's output width
+```
+
+在 row-batch 写法中：
+
+$$
+Y=XW_1^\mathsf{T}W_2^\mathsf{T}
+=X(W_2W_1)^\mathsf{T}.
+$$
+
+如果中间没有 activation，两个 Linear 可以合并成一个 Linear（bias 也要一起合并）。这再次说明 W 的 shape 不是装饰：第一层的 output width 必须等于第二层的 input width。
+
+加上 ReLU、GELU 等 activation 后，不能再简单合并，因为非线性打断了矩阵的纯函数复合：
+
+$$
+y=W_2\,\sigma(W_1x+b_1)+b_2.
+$$
+
+### 15.13 矩阵视角十：它是反向传播中的梯度账本
+
+前向时，一个样本的输出是
+
+$$
+y=Wx+b.
+$$
+
+若上游传回 output gradient
+
+$$
+g_y=\frac{\partial L}{\partial y}\in\mathbb{R}^{D_{\mathrm{out}}},
+$$
+
+那么这个样本对 W 的贡献是一个 outer product：
+
+$$
+\frac{\partial L}{\partial W}
+=
+g_y\,x^\mathsf{T}
+\in
+\mathbb{R}^{D_{\mathrm{out}}\times D_{\mathrm{in}}}.
+$$
+
+为什么 shape 恰好和 W 一样？因为每个 output neuron 的 error signal 都要乘以每个 input feature，形成一张“output × input”的更新表：
+
+$$
+\left(\frac{\partial L}{\partial W}\right)_{o,i}
+=
+\frac{\partial L}{\partial y_o}\,x_i.
+$$
+
+对一个 batch：
+
+$$
+\frac{\partial L}{\partial W}
+=
+G_Y^\mathsf{T}X,
+$$
+
+其中
+
+$$
+G_Y:[B,D_{\mathrm{out}}],
+\qquad
+X:[B,D_{\mathrm{in}}],
+\qquad
+G_Y^\mathsf{T}X:
+[D_{\mathrm{out}},B][B,D_{\mathrm{in}}]
+\to[D_{\mathrm{out}},D_{\mathrm{in}}].
+$$
+
+PyTorch 里的小验证：
+
+```python
+x = torch.tensor([[1.0, 2.0, 3.0],
+                  [4.0, 5.0, 6.0]], requires_grad=True)
+layer = nn.Linear(3, 2, bias=True)
+
+y = layer(x)
+loss = y.sum()
+loss.backward()
+
+print(layer.weight.grad.shape)  # [2, 3]
+print(layer.bias.grad.shape)    # [2]
+```
+
+把 W 存成 output-first 的 shape，让 forward 的每个 row、bias 的每个元素和 backward 的每个 output error 都有同一个 output-first 语义。这是非常整齐的参数账本。
+
+### 15.14 矩阵视角十一：CNN、attention 和 embedding 里的 output-first
+
+PyTorch 的 output-first 习惯不只出现在 nn.Linear。
+
+#### Conv2d
+
+Conv2d 的 weight shape 通常是
+
+$$
+[C_{\mathrm{out}},C_{\mathrm{in}},K_h,K_w].
+$$
+
+第一维仍然表示有多少个 output channel，也就是多少个 filter；第二维表示每个 filter 读取多少个 input channel；后两维是局部空间窗口。它是线性层的同一个思想，只是把 input feature 的一维索引拆成了 channel 和 local spatial offset：
+
+```text
+Linear:  weight [D_out, D_in]
+Conv2d:  weight [C_out, C_in, K_h, K_w]
+                         └── input side is factored into axes
+```
+
+#### Attention projection
+
+若 Transformer 的 model width 是 D，Q projection 输出 H d_h 个 feature，那么可以用
+
+$$
+W_Q:[H d_h,D].
+$$
+
+输入 X:[B,N,D] 经过
+
+$$
+Q_{\mathrm{flat}}=XW_Q^\mathsf{T}
+\to[B,N,Hd_h],
+$$
+
+再 reshape 成 [B,H,N,d_h]。这里第一维仍是 projection 输出宽度；head 只是之后对 output feature 的重新分组。
+
+#### Embedding
+
+Embedding 看起来像反例，因为 Embedding.weight 的 shape 是
+
+$$
+[N_{\mathrm{vocab}},D_{\mathrm{embedding}}],
+$$
+
+第一维是 token id 的数量，第二维是每个 token 的 vector width。它不是一个 Linear weight 的“output neuron × input feature”表，而是一个 lookup table：第 i 行就是 token i 的 embedding。矩阵的行仍然有明确语义，只是从 output neuron 变成了 vocabulary item。
+
+这个对照提醒我们：看到一个矩阵的 shape，不能只套一个口诀；必须先问它的 operation 是 linear projection、convolution、lookup 还是 adjacency。
+
+### 15.15 为什么不把 PyTorch 直接设计成 [D_in, D_out]
+
+现在可以把“为什么不是反过来”拆成几个真实原因：
+
+1. **每行一个 output neuron 很自然。** weight[o] 就是第 o 个输出的全部输入权重，和 bias[o] 对齐。
+2. **符合 column-vector 的标准线性映射。** $y=Wx$ 直接要求 W 是 [D_out,D_in]。
+3. **和卷积的 output-channel-first 习惯一致。** Conv2d、Conv1d 等也把 output channel 放在 weight 的前面。
+4. **参数初始化和检查更直接。** 初始化一个 output unit 的权重，就是取一整行；检查 output width，就是看第一维。
+5. **和 autograd 的梯度 shape 对齐。** batch gradient 是 $G_Y^\mathsf{T}X$，自然得到 [D_out,D_in]。
+6. **历史 API 和底层 kernel 共同形成了 convention。** 这不是一个必须由数学唯一决定的答案；换成 [D_in,D_out] 也可以，只是所有接口和 transpose 位置要一起换。
+
+最后一条很重要：不要把“PyTorch 这样存”误读成“矩阵只能这样写”。数学、代码和硬件分别有自己的方向约定，真正不能变的是数据流契约：
+
+$$
+\text{每个 output 都要读取所有 input，}
+\qquad
+\text{输出宽度必须是 }D_{\mathrm{out}}.
+$$
+
+### 15.16 常见写反的地方
+
+#### 把 W 的 shape 和实际右乘矩阵混为一谈
+
+在 PyTorch 中：
+
+```text
+parameter W:        [D_out, D_in]
+actual right side:  W.T = [D_in, D_out]
+input X:            [B, D_in]
+output X @ W.T:     [B, D_out]
+```
+
+所以看到 X @ W.T 不要以为 W 本身是 [D_in,D_out]；.T 改变的是参与这次 row-vector multiplication 的视图。
+
+#### 把 W 写成 [D_in,D_out] 后仍然调用 F.linear
+
+F.linear 的 weight 参数遵循 nn.Linear convention：
+
+```python
+x = torch.randn(4, 3)
+wrong_weight = torch.randn(3, 2)
+
+# F.linear(x, wrong_weight) 会把 wrong_weight 当成 [D_out, D_in]
+# 因此它期待 x 的最后一维是 2，而实际 x 的最后一维是 3。
+```
+
+如果你的参数确实采用 alternative convention，就显式写：
+
+```python
+y = x @ wrong_weight
+# [4, 3] @ [3, 2] -> [4, 2]
+```
+
+#### 在高阶 tensor 上乱用 .T
+
+对二维 W，W.T 很清楚。但如果 input 是 [B,N,D]，不要用 input.T 代替“最后两轴转置”；高阶 tensor 的 .T 会反转所有轴，通常不是你想要的。attention 中应该写：
+
+```python
+k_transposed = k.transpose(-2, -1)
+```
+
+这里仅交换 [N,D]，保留前面的 batch/head axes。
+
+#### 只看数字，不看轴的语义
+
+如果 $D_{\mathrm{in}}=D_{\mathrm{out}}=64$，那么 [64,64] 看起来无论怎么解释都能运行。但一个轴可能代表 input feature，另一个代表 output feature；当两者尺寸碰巧相等时，错误不会触发 shape exception，只会悄悄改变模型含义。这就是为什么本章一直强调“行是谁，列是谁”。
+
+### 15.17 一个完整的 shape 追踪例子
+
+考虑一个 batch size 为 2、输入宽度为 3、隐藏宽度为 4、输出类别数为 2 的 MLP：
+
+```python
+X = torch.randn(2, 3)           # [B, D0]
+W1 = torch.randn(4, 3)          # [D1, D0]
+b1 = torch.randn(4)             # [D1]
+W2 = torch.randn(2, 4)          # [D2, D1]
+b2 = torch.randn(2)             # [D2]
+
+H = X @ W1.T + b1               # [2, 3] @ [3, 4] -> [2, 4]
+H = torch.relu(H)               # [2, 4]
+Y = H @ W2.T + b2               # [2, 4] @ [4, 2] -> [2, 2]
+```
+
+逐层看：
+
+| 张量 | shape | 谁在读谁 |
+|---|---|---|
+| X | [2,3] | 2 个样本，每个 3 个 input feature |
+| W1 | [4,3] | 4 个 hidden neuron，每个读取 3 个 input |
+| H | [2,4] | 2 个样本，每个得到 4 个 hidden feature |
+| W2 | [2,4] | 2 个 output neuron，每个读取 4 个 hidden feature |
+| Y | [2,2] | 2 个样本，每个得到 2 个 logits |
+
+如果把 W1 错写成 [3,4] 但仍执行 X @ W1.T，shape 会变成 [2,3] @ [4,3]，内维 3 和 4 不匹配，立刻报错。如果改成 X @ W1，代码可能运行，但这时你实际使用的是 alternative convention，不再是 nn.Linear 的 weight convention。
+
+### 15.18 转移练习：不看答案先预测
+
+**练习 1。** layer = nn.Linear(7, 5) 的 weight 和 bias shape 是什么？输入 x:[4, 10, 7] 的输出 shape 是什么？
+
+**答案：** weight 是 [5,7]，bias 是 [5]，输出是 [4,10,5]。前两条轴只是 batch-like leading dimensions，Linear 只作用在最后的 7 维。
+
+**练习 2。** W 是 [6,4]，列向量 x 是 [4,1]。W 的一行和一列分别回答什么问题？
+
+**答案：** 一行回答“某个 output neuron 如何读取 4 个 input feature”；一列回答“某个 input basis / input feature 会把影响送到 6 个 output coordinates 的什么强度”。
+
+**练习 3。** 为什么 X:[8,3] @ W:[3,5] 可以运行，但 nn.Linear(3,5).weight 却是 [5,3]？
+
+**答案：** 前者把 W 当作 alternative row-vector parameter convention；后者的参数本体遵循 PyTorch output-first convention，需要写 X @ layer.weight.T。两者可以表示同一函数，但 checkpoint shape 不同。
+
+**练习 4。** 两层 Linear 的 weight 是 W1:[4,3] 和 W2:[2,4]。为什么这个顺序合法？
+
+**答案：** 第一层把 3 维输入映射成 4 维 hidden，第二层读取 4 维 hidden 再映射成 2 维输出；列向量组合是 W2 W1，shape 为 [2,4] @ [4,3] -> [2,3]。
+
+### 15.19 合上本章：记住一个不容易翻车的模型
+
+看到 PyTorch 的 W:[D_out,D_in] 时，不要只背“输出在前、输入在后”。同时启动下面五个问题：
+
+1. **neuron 视角：** 有 D_out 行，每行是一个 output neuron 的 D_in 个权重。
+2. **linear-map 视角：** W 把输入空间 $\mathbb{R}^{D_{\mathrm{in}}}$ 映射到输出空间 $\mathbb{R}^{D_{\mathrm{out}}}$。
+3. **basis 视角：** W 的第 i 列是输入 basis $e_i$ 在输出空间的去向。
+4. **batch 视角：** row-batch 输入用 X @ W.T，同一套 W 复用于所有样本。
+5. **gradient 视角：** batch 更新是 output-gradient 的转置乘 input，仍然得到 [D_out,D_in]。
+
+最短的 shape 口诀是：
+
+```text
+W 的一行：一个输出在看所有输入。
+W 的一列：一个输入会影响所有输出。
+列向量：   y = W x。
+行 batch：  Y = X W.T。
+PyTorch：  weight 存 [D_out, D_in]，bias 存 [D_out]。
+```
+
+当你能在 row、column、function、geometry、batch、gradient 这几个视角之间来回切换时，W 为什么是 [D_out,D_in] 就不再是框架规定的神秘数字，而是同一条数据流在不同坐标系下的自然结果。
