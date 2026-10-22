@@ -2127,58 +2127,133 @@ mask:   每个位置只能看到自己和左边的位置
 
 因此训练不是一个 token 一个 token 地循环，但因果 mask 让每个位置看到的信息仍然和自回归生成一致。推理时没有未来 target，只能按 token 逐步生成。
 
-#### 8.10.4 KV cache：缓存的是历史 K/V，不是另一种 attention
+#### 8.10.4 KV cache：结合 decoder-only 推理看懂
 
-KV cache 是 causal self-attention 的推理优化。它不改变 attention 的数学定义，只避免每生成一个新 token，就重新计算整个历史前缀的 K 和 V。
-
-假设已经生成到长度 $T$，下一步只输入一个新 token：
+decoder-only LM 的推理可以压缩成一条循环：
 
 ```text
-q_new:       [B, H, 1, d_h]
-k_new/v_new: [B, H, 1, d_h]
-k_cache:     [B, H, T, d_h]
-v_cache:     [B, H, T, d_h]
+token ids -> token/position embedding -> decoder blocks -> logits
+                                                        |
+                                      sample next token <-
 ```
 
-把当前 K/V 追加到 cache 后：
+每个 decoder block 都有 causal self-attention。假设 prompt 是 `[a, b, c]`：
 
 ```text
-k_all = concat(k_cache, k_new): [B, H, T+1, d_h]
-v_all = concat(v_cache, v_new): [B, H, T+1, d_h]
+prefill: 输入 [a, b, c]，并行算完整个 prompt，保存每层的 K/V
+         取最后一个位置的 logits，采样出 d
 
-q_new @ k_all.T -> [B, H, 1, T+1]
-weights @ v_all -> [B, H, 1, d_h]
+decode:  输入 [d]，只算 d 的 Q/K/V
+         d 的 Q 读取 [a, b, c, d] 的 K/V，得到下一组 logits
+         采样 e；下一轮只输入 [e]
 ```
 
-一个教学版实现如下：
+关键不变量是：causal mask 让旧位置看不到新 token，所以旧位置的 hidden state 不会改变。于是历史 Q 的输出已经完成，不必保存；历史 K/V 会被每个新 Q 重复读取，才值得缓存。
+
+下面是一个最小但完整的 decoder-only 骨架。它只有一个 decoder block，真实模型会把 `blocks` 堆叠成 $L$ 层；因此 `past_kv` 是“每层一份 `(K, V)`”，而不是全模型只有一份。
 
 ```python
-def causal_decode_step(q_new, k_new, v_new, k_cache=None, v_cache=None):
-    # q_new/k_new/v_new: [B, H, 1, d_h]
-    if k_cache is None:
-        k_all, v_all = k_new, v_new
-    else:
-        k_all = torch.cat([k_cache, k_new], dim=-2)
-        v_all = torch.cat([v_cache, v_new], dim=-2)
+import math
+import torch
+from torch import nn
 
-    scores = q_new @ k_all.transpose(-2, -1)
-    scores = scores / math.sqrt(q_new.size(-1))
-    weights = torch.softmax(scores, dim=-1)
-    out = weights @ v_all
-    return out, k_all, v_all
+class DecoderBlock(nn.Module):
+    def __init__(self, d_model=32, n_heads=4):
+        super().__init__()
+        assert d_model % n_heads == 0
+        self.n_heads, self.d_h = n_heads, d_model // n_heads
+        self.ln1 = nn.LayerNorm(d_model)
+        self.qkv = nn.Linear(d_model, 3 * d_model)
+        self.proj = nn.Linear(d_model, d_model)
+        self.ln2 = nn.LayerNorm(d_model)
+        self.mlp = nn.Sequential(
+            nn.Linear(d_model, 4 * d_model), nn.GELU(),
+            nn.Linear(4 * d_model, d_model),
+        )
+
+    def forward(self, x, past_kv=None):
+        # x: [B, T, D]; K/V: [B, H, T, d_h]
+        h = self.ln1(x)
+        B, T, D = h.shape
+        q, k, v = self.qkv(h).chunk(3, dim=-1)
+        shape = (B, T, self.n_heads, self.d_h)
+        q = q.view(shape).transpose(1, 2)
+        k = k.view(shape).transpose(1, 2)
+        v = v.view(shape).transpose(1, 2)
+
+        past_len = 0 if past_kv is None else past_kv[0].size(2)
+        if past_kv is not None:
+            k = torch.cat((past_kv[0], k), dim=2)
+            v = torch.cat((past_kv[1], v), dim=2)
+
+        # Query at position past_len+i may read key positions <= past_len+i.
+        S = k.size(2)
+        q_pos = past_len + torch.arange(T, device=x.device)
+        k_pos = torch.arange(S, device=x.device)
+        allowed = k_pos[None, :] <= q_pos[:, None]
+        scores = q @ k.transpose(-2, -1) / math.sqrt(self.d_h)
+        scores = scores.masked_fill(~allowed[None, None], float("-inf"))
+        attn = torch.softmax(scores, dim=-1)
+        y = attn @ v
+        y = y.transpose(1, 2).contiguous().view(B, T, D)
+
+        x = x + self.proj(y)
+        x = x + self.mlp(self.ln2(x))
+        return x, (k, v)
+
+class TinyDecoderOnlyLM(nn.Module):
+    def __init__(self, vocab=100, max_len=128, d_model=32, n_heads=4):
+        super().__init__()
+        self.tok_emb = nn.Embedding(vocab, d_model)
+        self.pos_emb = nn.Embedding(max_len, d_model)
+        self.blocks = nn.ModuleList([DecoderBlock(d_model, n_heads)])
+        self.ln_f = nn.LayerNorm(d_model)
+        self.lm_head = nn.Linear(d_model, vocab, bias=False)
+
+    def forward(self, input_ids, past_kv=None):
+        B, T = input_ids.shape
+        past_len = 0 if past_kv is None else past_kv[0][0].size(2)
+        pos = torch.arange(past_len, past_len + T, device=input_ids.device)
+        x = self.tok_emb(input_ids) + self.pos_emb(pos)[None, :, :]
+
+        new_cache = []
+        for block, layer_cache in zip(self.blocks, past_kv or [None]):
+            x, layer_cache = block(x, layer_cache)
+            new_cache.append(layer_cache)
+        logits = self.lm_head(self.ln_f(x))  # [B, T, vocab]
+        return logits, new_cache
+
+torch.manual_seed(0)
+model = TinyDecoderOnlyLM().eval()
+prompt = torch.tensor([[1, 2, 3]])
+
+with torch.no_grad():
+    # Prefill: process the prompt and cache every layer's K/V.
+    logits, cache = model(prompt)
+    next_id = logits[:, -1:].argmax(dim=-1)
+    generated = prompt.clone()
+
+    # Decode: consume one sampled token per iteration.
+    for _ in range(2):
+        current = next_id
+        logits, cache = model(current, cache)
+        generated = torch.cat((generated, current), dim=1)
+
+        # Full-prefix computation is only a correctness reference.
+        reference, _ = model(generated)
+        assert torch.allclose(logits[:, -1], reference[:, -1], atol=1e-5)
+
+        next_id = logits[:, -1:].argmax(dim=-1)
+        print("cache K:", cache[0][0].shape)
 ```
 
-为什么不缓存 Q？因为历史 query 的输出已经算完，下一步只需要当前 token 的 query 去读取所有历史 K/V。为什么缓存 K/V？因为它们会被未来每一步重复读取。实际系统还会把 cache 按 layer、batch、head、sequence position 管理，并考虑 paged memory、beam search 和 sliding window。
+代码中最容易混淆的三点：
 
-KV cache 改善的是重复计算，不是把标准 attention 变成线性复杂度：
+1. `past_kv[0]` 是第 0 层的 `(K, V)`；第 0 层的 K shape 是 `[B, H, cached_T, d_h]`。`torch.cat(..., dim=2)` 沿 token 轴追加，不是沿 feature 轴拼接。
+2. `q @ k.transpose(-2, -1)` 是 `[B, H, T_new, d_h] @ [B, H, d_h, T_all]`，结果 `[B, H, T_new, T_all]`。prefill 时 `T_new=T_all=T`；decode 时 `T_new=1`，`T_all` 每轮加一。
+3. `logits[:, -1]` 才是“预测下一个 token”的分布。采样出的 token 要到下一轮作为 `input_ids` 送入模型，才会产生自己的 K/V；采样不等于已经写入 cache。
 
-| 情况 | 每一步需要比较的 key 数 | 生成完整长度 T 的注意力工作量 |
-|---|---:|---:|
-| 不缓存，反复重算前缀 | 还要重复计算历史 K/V | 大量重复，实际开销很高 |
-| 缓存 K/V | 当前 query 对已有 $t$ 个 K 做 dot product | 仍约为 $\sum_t O(t)$，即二次级别 |
-| DeltaNet 这类 recurrent state | 当前 query 读一个固定大小 state | 可按序列长度线性增长 |
-
-所以 KV cache 的本质是“把历史 token 的 K/V 留下来”，不是“让每个 token 只看一个 token”。当前 query 仍然可以读取全部历史 key。
+`reference` 每次把完整前缀重算，只用于验证；真正推理只走带 cache 的分支。KV cache 减少了旧 token 的重复投影和 attention 计算，但新 query 仍要读取全部历史 key，因此标准 attention 的读取量仍随上下文长度增长。工程实现通常预分配 cache 或使用 paged cache，示例里的 `torch.cat` 只是为了把 token 轴的变化讲清楚。
 
 #### 8.10.5 Grouped-Query Attention：让多个 Q head 共享 K/V head
 
