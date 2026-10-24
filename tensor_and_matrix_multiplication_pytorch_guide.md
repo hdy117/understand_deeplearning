@@ -21,6 +21,7 @@
 - [10. 常见误解](#10-常见误解能运行不等于语义正确)
 - [11. 一张 shape 追踪图](#11-一张-shape-追踪图从输入到线性层)
 - [12. 性能直觉](#12-性能直觉为什么-shape-还关系到速度和显存)
+- [12.1 view、reshape、transpose 与显存](#121-viewreshape-transpose-与显存形状步长和存储)
 - [13. 迁移练习](#13-迁移练习含答案)
 - [14. 主线小结](#14-主线小结先闭环再进入专题)
 - [15. 专题：W 的多种矩阵视角](#15-为什么-pytorch-的-w-是-d_out-d_in矩阵的多种视角)
@@ -77,11 +78,11 @@ linear / convolution / attention / graph message passing
 数学上的 tensor 可以有更抽象的定义；这里先使用深度学习最有用的工程含义。`torch.Tensor` 不是“只有三维以上才算 tensor”。在 PyTorch 里，下面每个对象都是 tensor：
 
 ```python
-import torch
+import torch  # 导入所需的 Python 模块。
 
 scalar = torch.tensor(3.0)                    # shape: []
 vector = torch.tensor([1.0, 2.0, 3.0])        # shape: [3]
-matrix = torch.tensor([[1.0, 2.0],
+matrix = torch.tensor([[1.0, 2.0],  # 创建一个可读的示例 tensor。
                        [3.0, 4.0]])          # shape: [2, 2]
 image = torch.zeros(3, 224, 224)              # shape: [3, 224, 224]
 batch = torch.zeros(32, 3, 224, 224)          # shape: [32, 3, 224, 224]
@@ -409,11 +410,11 @@ q[1, 2] 表示第 2 个样本的第 3 个 head；它是一张普通的 rank-2 ma
 现在做：
 
 ```python
-import torch
+import torch  # 导入所需的 Python 模块。
 
-B, H, N, Dh = 2, 4, 3, 8
-q = torch.randn(B, H, N, Dh)
-k = torch.randn(B, H, N, Dh)
+B, H, N, Dh = 2, 4, 3, 8  # 执行当前张量计算并保存结果。
+q = torch.randn(B, H, N, Dh)  # 创建 query tensor，最后一维是 feature width。
+k = torch.randn(B, H, N, Dh)  # 创建 key tensor，最后一维是 feature width。
 q_one = q[1, 2]                    # [N, Dh] = [3, 8]
 k_one = k[1, 2]                    # [N, Dh] = [3, 8]
 score_one = q_one @ k_one.T        # [3, 8] @ [8, 3] -> [3, 3]
@@ -445,8 +446,11 @@ $$
 所以这个 rank-4 matmul 可以等价地想象成：
 
 ```text
+# 伪代码：对每个 batch 样本分别处理。
 for b in range(B):
+    # 伪代码：在当前样本内，对每个 attention head 分别处理。
     for h in range(H):
+        # 每个 (b, h) 都执行一次独立的 rank-2 matrix multiplication。
         scores[b, h] = q[b, h] @ k[b, h].T
 ```
 
@@ -468,22 +472,22 @@ for b in range(B):
 用 PyTorch 验证：
 
 ```python
-import torch
+import torch  # 导入所需的 Python 模块。
 
-B, H, N, Dh = 2, 4, 3, 8
-q = torch.randn(B, H, N, Dh)
-k = torch.randn(B, H, N, Dh)
+B, H, N, Dh = 2, 4, 3, 8  # 执行当前张量计算并保存结果。
+q = torch.randn(B, H, N, Dh)  # 创建 query tensor，最后一维是 feature width。
+k = torch.randn(B, H, N, Dh)  # 创建 key tensor，最后一维是 feature width。
 
-scores = q @ k.transpose(-2, -1)
-assert q.ndim == 4
-assert k.transpose(-2, -1).shape == (B, H, Dh, N)
-assert scores.shape == (B, H, N, N)
+scores = q @ k.transpose(-2, -1)  # 计算 query 与 key 的 dot product 得分。
+assert q.ndim == 4  # 验证 shape、数值或两个实现的结果一致。
+assert k.transpose(-2, -1).shape == (B, H, Dh, N)  # 验证 shape、数值或两个实现的结果一致。
+assert scores.shape == (B, H, N, N)  # 验证 shape、数值或两个实现的结果一致。
 
 # 逐个 (b, h) 做 rank-2 matmul，结果应与完整写法一致。
-for b in range(B):
-    for h in range(H):
-        expected = q[b, h] @ k[b, h].T
-        assert torch.allclose(scores[b, h], expected)
+for b in range(B):  # 遍历当前 batch、时间步或数据集合。
+    for h in range(H):  # 遍历当前 batch、时间步或数据集合。
+        expected = q[b, h] @ k[b, h].T  # 执行当前张量计算并保存结果。
+        assert torch.allclose(scores[b, h], expected)  # 验证 shape、数值或两个实现的结果一致。
 ```
 
 #### matmul、bmm、mm 对 rank 的态度
@@ -499,8 +503,8 @@ matmul: 接受更一般的 rank，并把前导轴当作可 broadcasting 的 batc
 因此，rank-4 attention 不能直接交给 torch.mm：
 
 ```python
-q = torch.randn(2, 4, 3, 8)
-k = torch.randn(2, 4, 3, 8)
+q = torch.randn(2, 4, 3, 8)  # 创建 query tensor，最后一维是 feature width。
+k = torch.randn(2, 4, 3, 8)  # 创建 key tensor，最后一维是 feature width。
 
 # torch.mm(q, k.transpose(-2, -1))  # 错误：mm 只接受 rank-2
 scores = torch.matmul(q, k.transpose(-2, -1))  # [2,4,3,3]
@@ -509,15 +513,15 @@ scores = torch.matmul(q, k.transpose(-2, -1))  # [2,4,3,3]
 如果把 B 和 H 合并，也可以手动把 rank-4 变成 rank-3，再使用 bmm：
 
 ```python
-B, H, N, Dh = 2, 4, 3, 8
-q = torch.randn(B, H, N, Dh)
-k = torch.randn(B, H, N, Dh)
-scores = q @ k.transpose(-2, -1)
+B, H, N, Dh = 2, 4, 3, 8  # 执行当前张量计算并保存结果。
+q = torch.randn(B, H, N, Dh)  # 创建 query tensor，最后一维是 feature width。
+k = torch.randn(B, H, N, Dh)  # 创建 key tensor，最后一维是 feature width。
+scores = q @ k.transpose(-2, -1)  # 计算 query 与 key 的 dot product 得分。
 q_flat = q.reshape(B * H, N, Dh)                 # [B*H, N, Dh]
 k_flat = k.reshape(B * H, N, Dh)                 # [B*H, N, Dh]
-scores_flat = torch.bmm(q_flat, k_flat.transpose(1, 2))
+scores_flat = torch.bmm(q_flat, k_flat.transpose(1, 2))  # 改变 shape 或轴顺序，并保留对应的 layout 语义。
 scores_bmm = scores_flat.reshape(B, H, N, N)     # [B,H,N,N]
-assert torch.allclose(scores, scores_bmm)
+assert torch.allclose(scores, scores_bmm)  # 验证 shape、数值或两个实现的结果一致。
 ```
 
 这里的 reshape 没有把不同样本或不同 head 的数字混在一个矩阵乘法里；它只是把两个并行索引 (B,H) 合并成一个 batch index B*H，以符合 bmm 的接口。
@@ -580,7 +584,7 @@ k: [B, H, N, Dh]
 先把 `k` 的最后两个轴转置：
 
 ```python
-scores = q @ k.transpose(-2, -1)
+scores = q @ k.transpose(-2, -1)  # 计算 query 与 key 的 dot product 得分。
 ```
 
 shape 追踪是：
@@ -696,19 +700,19 @@ $$
 PyTorch 代码把每个轴也标出来：
 
 ```python
-import torch
-import torch.nn.functional as F
+import torch  # 导入所需的 Python 模块。
+import torch.nn.functional as F  # 导入所需的 Python 模块。
 
-x = torch.arange(1, 10, dtype=torch.float32).reshape(1, 1, 3, 3)
+x = torch.arange(1, 10, dtype=torch.float32).reshape(1, 1, 3, 3)  # 构造输入或监督信号 tensor。
 # [B, C_in, H, W] = [1, 1, 3, 3]
 
-kernel = torch.tensor([[[[1.0, 0.0],
-                         [0.0, 1.0]]]])
+kernel = torch.tensor([[[[1.0, 0.0],  # 构造参数 tensor，并保持注释中的 shape 约定。
+                         [0.0, 1.0]]]])  # 继续当前示例的 tensor 计算。
 # [C_out, C_in, K_h, K_w] = [1, 1, 2, 2]
 
-y = F.conv2d(x, kernel)
+y = F.conv2d(x, kernel)  # 保存当前层或矩阵乘法的输出 tensor。
 print(y.shape)  # torch.Size([1, 1, 2, 2])
-print(y[0, 0])
+print(y[0, 0])  # 打印结果，帮助观察值、shape 或 layout。
 # tensor([[ 6.,  8.],
 #         [12., 14.]])
 ```
@@ -716,21 +720,21 @@ print(y[0, 0])
 也可以把卷积临时改写成“局部 patch 的矩阵乘法”。这叫 im2col 思路，能帮助我们理解 contraction，但不意味着高性能实现一定真的创建这么大的中间矩阵：
 
 ```python
-patches = F.unfold(x, kernel_size=2)
+patches = F.unfold(x, kernel_size=2)  # 执行当前张量计算并保存结果。
 # [B, C_in*K_h*K_w, L] = [1, 4, 4]
 # L 是输出空间位置数：2*2 = 4
 
-patches = patches.transpose(1, 2)
+patches = patches.transpose(1, 2)  # 改变 shape 或轴顺序，并保留对应的 layout 语义。
 # [B, L, C_in*K_h*K_w] = [1, 4, 4]
 
-weight_flat = kernel.reshape(1, -1)
+weight_flat = kernel.reshape(1, -1)  # 构造参数 tensor，并保持注释中的 shape 约定。
 # [C_out, C_in*K_h*K_w] = [1, 4]
 
-y_cols = patches @ weight_flat.transpose(0, 1)
+y_cols = patches @ weight_flat.transpose(0, 1)  # 改变 shape 或轴顺序，并保留对应的 layout 语义。
 # [B, L, 4] @ [4, C_out] -> [B, L, C_out]
 # [1, 4, 4] @ [4, 1] -> [1, 4, 1]
 
-y_again = y_cols.transpose(1, 2).reshape(1, 1, 2, 2)
+y_again = y_cols.transpose(1, 2).reshape(1, 1, 2, 2)  # 改变 shape 或轴顺序，并保留对应的 layout 语义。
 print(torch.equal(y, y_again))  # True
 ```
 
@@ -812,16 +816,16 @@ $$
 PyTorch 里的对应写法非常直接：
 
 ```python
-A = torch.tensor([
-    [1.0, 1.0, 0.0],
-    [1.0, 1.0, 1.0],
-    [0.0, 1.0, 1.0],
+A = torch.tensor([  # 创建一个可读的示例 tensor。
+    [1.0, 1.0, 0.0],  # 继续当前示例的 tensor 计算。
+    [1.0, 1.0, 1.0],  # 继续当前示例的 tensor 计算。
+    [0.0, 1.0, 1.0],  # 继续当前示例的 tensor 计算。
 ])                                  # [N, N] = [3, 3]
 
-H = torch.tensor([
-    [1.0,   0.0],
-    [2.0,  10.0],
-    [4.0, 100.0],
+H = torch.tensor([  # 创建一个可读的示例 tensor。
+    [1.0,   0.0],  # 继续当前示例的 tensor 计算。
+    [2.0,  10.0],  # 继续当前示例的 tensor 计算。
+    [4.0, 100.0],  # 继续当前示例的 tensor 计算。
 ])                                  # [N, D] = [3, 2]
 
 H_next = A @ H                      # [3, 3] @ [3, 2] -> [3, 2]
@@ -842,7 +846,7 @@ $$
 ```python
 A_batch = torch.randn(8, 100, 100)  # [B, N, N]
 H_batch = torch.randn(8, 100, 64)   # [B, N, D]
-H_next = torch.bmm(A_batch, H_batch)
+H_next = torch.bmm(A_batch, H_batch)  # 保存当前层或矩阵乘法的输出 tensor。
 # [8, 100, 100] @ [8, 100, 64] -> [8, 100, 64]
 ```
 
@@ -864,18 +868,18 @@ edge list -> gather sender state -> compute each edge message
 用 edge list 写一个最简单的“把 sender feature 相加”的版本：
 
 ```python
-H = torch.tensor([
-    [1.0,   0.0],
-    [2.0,  10.0],
-    [4.0, 100.0],
+H = torch.tensor([  # 创建一个可读的示例 tensor。
+    [1.0,   0.0],  # 继续当前示例的 tensor 计算。
+    [2.0,  10.0],  # 继续当前示例的 tensor 计算。
+    [4.0, 100.0],  # 继续当前示例的 tensor 计算。
 ])                                      # [N, D]
 
 src = torch.tensor([0, 1, 1, 2])        # 每条边的 sender
 dst = torch.tensor([0, 0, 1, 1])        # 每条边的 receiver
 
 messages = H[src]                       # [E, D] = [4, 2]
-aggregated = torch.zeros_like(H)
-aggregated.index_add_(0, dst, messages)
+aggregated = torch.zeros_like(H)  # 创建用于演示的 tensor。
+aggregated.index_add_(0, dst, messages)  # 继续当前示例的 tensor 计算。
 # [N, D]，把同一个 receiver 的 edge message 相加
 ```
 
@@ -931,23 +935,23 @@ A @ H: [N, N] @ [N, D] -> [N, D]
 下面代码把上一节的数字原样搬进 PyTorch：
 
 ```python
-import torch
+import torch  # 导入所需的 Python 模块。
 
-X = torch.tensor([
-    [1.0, 2.0, 3.0],
-    [4.0, 5.0, 6.0],
+X = torch.tensor([  # 构造输入或监督信号 tensor。
+    [1.0, 2.0, 3.0],  # 继续当前示例的 tensor 计算。
+    [4.0, 5.0, 6.0],  # 继续当前示例的 tensor 计算。
 ])                         # [B, D_in] = [2, 3]
 
-W = torch.tensor([
-    [10.0, 20.0, 30.0],
-    [40.0, 50.0, 60.0],
+W = torch.tensor([  # 构造参数 tensor，并保持注释中的 shape 约定。
+    [10.0, 20.0, 30.0],  # 继续当前示例的 tensor 计算。
+    [40.0, 50.0, 60.0],  # 继续当前示例的 tensor 计算。
 ])                         # [D_out, D_in] = [2, 3]
 
 b = torch.tensor([100.0, 200.0])     # [D_out] = [2]
 
 Y = X @ W.T + b                       # [2, 3] @ [3, 2] -> [2, 2]
 
-print(Y)
+print(Y)  # 打印结果，帮助观察值、shape 或 layout。
 # tensor([[240., 520.],
 #         [420., 970.]])
 ```
@@ -964,17 +968,17 @@ print(Y)
 ### 5.2 用 `nn.Linear` 复现同一层
 
 ```python
-import torch
-from torch import nn
+import torch  # 导入所需的 Python 模块。
+from torch import nn  # 导入所需的 PyTorch API。
 
-layer = nn.Linear(in_features=3, out_features=2, bias=True)
+layer = nn.Linear(in_features=3, out_features=2, bias=True)  # 创建 neural network layer 或 module。
 
-with torch.no_grad():
+with torch.no_grad():  # 在这个上下文中执行临时的计算或资源管理。
     layer.weight.copy_(W)              # [2, 3]
     layer.bias.copy_(b)                # [2]
 
-Y_from_module = layer(X)
-print(torch.allclose(Y_from_module, Y))
+Y_from_module = layer(X)  # 执行当前张量计算并保存结果。
+print(torch.allclose(Y_from_module, Y))  # 打印结果，帮助观察值、shape 或 layout。
 # True
 ```
 
@@ -1014,32 +1018,32 @@ Linear: H @ W2.T + b2       [B, D_out]
 前向时，网络把输入 tensor 变成预测；loss 把预测压成一个 scalar；`backward()` 从这个 scalar 沿计算图反向传播。第 7 章说的“反向传播主成本也是矩阵乘”，就在这里发生。
 
 ```python
-import torch
-from torch import nn
+import torch  # 导入所需的 Python 模块。
+from torch import nn  # 导入所需的 PyTorch API。
 
-torch.manual_seed(0)
+torch.manual_seed(0)  # 固定随机种子，让示例结果可复现。
 
-X = torch.tensor([
-    [1.0, 2.0, 3.0],
-    [4.0, 5.0, 6.0],
+X = torch.tensor([  # 构造输入或监督信号 tensor。
+    [1.0, 2.0, 3.0],  # 继续当前示例的 tensor 计算。
+    [4.0, 5.0, 6.0],  # 继续当前示例的 tensor 计算。
 ])                              # [B, D_in] = [2, 3]
-target = torch.tensor([
-    [0.0, 1.0],
-    [1.0, 0.0],
+target = torch.tensor([  # 构造输入或监督信号 tensor。
+    [0.0, 1.0],  # 继续当前示例的 tensor 计算。
+    [1.0, 0.0],  # 继续当前示例的 tensor 计算。
 ])                              # [B, D_out] = [2, 2]
 
-model = nn.Sequential(
-    nn.Linear(3, 4),
-    nn.ReLU(),
-    nn.Linear(4, 2),
-)
+model = nn.Sequential(  # 创建 neural network layer 或 module。
+    nn.Linear(3, 4),  # 执行当前 PyTorch 运算。
+    nn.ReLU(),  # 执行当前 PyTorch 运算。
+    nn.Linear(4, 2),  # 执行当前 PyTorch 运算。
+)  # 结束当前多行调用、容器或代码块。
 
 prediction = model(X)                  # [2, 2]
 loss = (prediction - target).pow(2).mean()  # scalar: []
-loss.backward()
+loss.backward()  # 反向传播，计算所有可训练参数的 gradient。
 
-for name, parameter in model.named_parameters():
-    print(name, parameter.shape, parameter.grad.shape)
+for name, parameter in model.named_parameters():  # 遍历当前 batch、时间步或数据集合。
+    print(name, parameter.shape, parameter.grad.shape)  # 打印结果，帮助观察值、shape 或 layout。
 ```
 
 你应该看到类似：
@@ -1085,16 +1089,16 @@ $$
 ### 7.1 `*` 不是矩阵乘法
 
 ```python
-a = torch.tensor([[1.0, 2.0],
-                  [3.0, 4.0]])
-b = torch.tensor([[10.0, 20.0],
-                  [30.0, 40.0]])
+a = torch.tensor([[1.0, 2.0],  # 创建一个可读的示例 tensor。
+                  [3.0, 4.0]])  # 继续当前示例的 tensor 计算。
+b = torch.tensor([[10.0, 20.0],  # 构造参数 tensor，并保持注释中的 shape 约定。
+                  [30.0, 40.0]])  # 继续当前示例的 tensor 计算。
 
-print(a * b)
+print(a * b)  # 打印结果，帮助观察值、shape 或 layout。
 # tensor([[ 10.,  40.],
 #         [ 90., 160.]])
 
-print(a @ b)
+print(a @ b)  # 打印结果，帮助观察值、shape 或 layout。
 # tensor([[ 70., 100.],
 #         [150., 220.]])
 ```
@@ -1104,14 +1108,14 @@ print(a @ b)
 ### 7.2 `mm`、`matmul`、`bmm` 如何选择
 
 ```python
-A = torch.randn(2, 3)
-B = torch.randn(3, 4)
+A = torch.randn(2, 3)  # 创建用于演示的 tensor。
+B = torch.randn(3, 4)  # 创建用于演示的 tensor。
 C = torch.mm(A, B)          # [2, 4]
 D = torch.matmul(A, B)      # [2, 4]
 E = A @ B                   # [2, 4]
 
-batch_A = torch.randn(5, 2, 3)
-batch_B = torch.randn(5, 3, 4)
+batch_A = torch.randn(5, 2, 3)  # 更新当前统计量或数据分片。
+batch_B = torch.randn(5, 3, 4)  # 更新当前统计量或数据分片。
 batch_C = torch.bmm(batch_A, batch_B)       # [5, 2, 4]
 batch_D = torch.matmul(batch_A, batch_B)    # [5, 2, 4]
 ```
@@ -1126,7 +1130,7 @@ Transformer 的 score 可以用 `einsum` 表示：
 q = torch.randn(2, 4, 8, 16)       # [B, H, N, Dh]
 k = torch.randn(2, 4, 8, 16)       # [B, H, N, Dh]
 
-scores = torch.einsum("bhid,bhjd->bhij", q, k)
+scores = torch.einsum("bhid,bhjd->bhij", q, k)  # 计算 query 与 key 的 dot product 得分。
 # [B, H, N, N] = [2, 4, 8, 8]
 ```
 
@@ -1176,14 +1180,14 @@ bhid,bhjd->bhij
 先用只有一条轴的向量把规则跑通。令
 
 ```python
-x = torch.tensor([1.0, 2.0, 3.0])
-y = torch.tensor([10.0, 20.0, 30.0])
+x = torch.tensor([1.0, 2.0, 3.0])  # 构造输入或监督信号 tensor。
+y = torch.tensor([10.0, 20.0, 30.0])  # 保存当前层或矩阵乘法的输出 tensor。
 ```
 
 向量点积写成：
 
 ```python
-dot = torch.einsum("d,d->", x, y)
+dot = torch.einsum("d,d->", x, y)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 # 1*10 + 2*20 + 3*30 = 140
 # 输出 shape 是 []，也就是 scalar
 ```
@@ -1191,7 +1195,7 @@ dot = torch.einsum("d,d->", x, y)
 标签 d 在两个输入中出现，表示对应位置相乘；右侧没有 d，表示乘完后沿 d 求和。若把 d 放进输出，就不再求和，而是得到逐元素乘法：
 
 ```python
-elementwise = torch.einsum("d,d->d", x, y)
+elementwise = torch.einsum("d,d->d", x, y)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 # tensor([10., 40., 90.])
 # shape = [3]
 ```
@@ -1199,7 +1203,7 @@ elementwise = torch.einsum("d,d->d", x, y)
 outer product 不共享标签：
 
 ```python
-outer = torch.einsum("i,j->ij", x, y)
+outer = torch.einsum("i,j->ij", x, y)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 # shape = [3, 3]
 # outer[i, j] = x[i] * y[j]
 ```
@@ -1209,10 +1213,10 @@ outer = torch.einsum("i,j->ij", x, y)
 矩阵乘法只是同样的规则再加一条轴。令 A 的 shape 为 [M,K]，B 的 shape 为 [K,N]：
 
 ```python
-A = torch.randn(2, 3)
-B = torch.randn(3, 4)
+A = torch.randn(2, 3)  # 创建用于演示的 tensor。
+B = torch.randn(3, 4)  # 创建用于演示的 tensor。
 
-C = torch.einsum("ik,kj->ij", A, B)
+C = torch.einsum("ik,kj->ij", A, B)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 # [2, 3] 与 [3, 4] -> [2, 4]
 ```
 
@@ -1233,14 +1237,14 @@ torch.allclose(C, A @ B)  # True
 转置只是交换输出标签，不需要乘法：
 
 ```python
-AT = torch.einsum("ij->ji", A)
+AT = torch.einsum("ij->ji", A)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 # [M, K] -> [K, M]
 ```
 
 对角线和 trace 也能用重复标签表达：
 
 ```python
-M = torch.randn(4, 4)
+M = torch.randn(4, 4)  # 创建用于演示的 tensor。
 diagonal = torch.einsum("ii->i", M)  # 取主对角线，[4]
 trace = torch.einsum("ii->", M)      # 对角线再求和，scalar
 ```
@@ -1252,7 +1256,7 @@ trace = torch.einsum("ii->", M)      # 对角线再求和，scalar
 箭头右侧明确指定输出标签，推荐在教学和调试代码中始终写出来：
 
 ```python
-C1 = torch.einsum("ik,kj->ij", A, B)
+C1 = torch.einsum("ik,kj->ij", A, B)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 ```
 
 如果省略箭头，PyTorch 会根据规则推断输出标签：只出现一次的标签被保留，并按字母顺序排列。简单例子通常没问题，但复杂 equation 中输出顺序不够直观，因此显式的 ->ij 更安全。
@@ -1262,18 +1266,18 @@ C1 = torch.einsum("ik,kj->ij", A, B)
 三个点表示“任意数量的前置轴”。例如：
 
 ```python
-A = torch.randn(8, 2, 3)
-B = torch.randn(8, 3, 5)
-C = torch.einsum("...ik,...kj->...ij", A, B)
+A = torch.randn(8, 2, 3)  # 创建用于演示的 tensor。
+B = torch.randn(8, 3, 5)  # 创建用于演示的 tensor。
+C = torch.einsum("...ik,...kj->...ij", A, B)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 # [8, 2, 3] 与 [8, 3, 5] -> [8, 2, 5]
 ```
 
 这里 ... 代表 batch-like 的 [8]，真正的矩阵轴仍是 ik 和 kj。若有多个前置 batch 轴，ellipsis 会一起代表它们：
 
 ```python
-A = torch.randn(2, 4, 3, 5)
-B = torch.randn(2, 4, 5, 7)
-C = torch.einsum("...ik,...kj->...ij", A, B)
+A = torch.randn(2, 4, 3, 5)  # 创建用于演示的 tensor。
+B = torch.randn(2, 4, 5, 7)  # 创建用于演示的 tensor。
+C = torch.einsum("...ik,...kj->...ij", A, B)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 # [2, 4, 3, 5] 与 [2, 4, 5, 7] -> [2, 4, 3, 7]
 ```
 
@@ -1287,7 +1291,7 @@ C = torch.einsum("...ik,...kj->...ij", A, B)
 A = torch.randn(8, 2, 3)  # [B, M, K]
 B = torch.randn(8, 3, 4)  # [B, K, N]
 
-C = torch.einsum("bik,bkj->bij", A, B)
+C = torch.einsum("bik,bkj->bij", A, B)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 # [B, M, K] 与 [B, K, N] -> [B, M, N]
 ```
 
@@ -1303,7 +1307,7 @@ weight:  [C_out, P]
 其中 L 是一张图片里的局部窗口数量，P 是每个窗口摊平后的长度。卷积的局部 dot product 是：
 
 ```python
-y_cols = torch.einsum("blp,op->blo", patches, weight)
+y_cols = torch.einsum("blp,op->blo", patches, weight)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 # [B, L, P] 与 [C_out, P] -> [B, L, C_out]
 ```
 
@@ -1315,7 +1319,7 @@ GNN 的稠密 message passing：
 A = torch.randn(5, 5)       # [receiver_i, sender_j]
 H = torch.randn(5, 64)      # [sender_j, feature_d]
 
-H_next = torch.einsum("ij,jd->id", A, H)
+H_next = torch.einsum("ij,jd->id", A, H)  # 保存当前层或矩阵乘法的输出 tensor。
 # [5, 5] 与 [5, 64] -> [5, 64]
 ```
 
@@ -1325,7 +1329,7 @@ j 是 sender node 轴，被收缩；i 是 receiver node 轴，d 是 feature 轴�
 A = torch.randn(8, 5, 5)    # [B, receiver_i, sender_j]
 H = torch.randn(8, 5, 64)   # [B, sender_j, feature_d]
 
-H_next = torch.einsum("bij,bjd->bid", A, H)
+H_next = torch.einsum("bij,bjd->bid", A, H)  # 保存当前层或矩阵乘法的输出 tensor。
 # [8, 5, 5] 与 [8, 5, 64] -> [8, 5, 64]
 ```
 
@@ -1338,13 +1342,13 @@ q = torch.randn(2, 4, 8, 16)  # [B, H, query_i, feature_d]
 k = torch.randn(2, 4, 8, 16)  # [B, H, key_j, feature_d]
 v = torch.randn(2, 4, 8, 16)  # [B, H, value_j, feature_d]
 
-scores = torch.einsum("bhid,bhjd->bhij", q, k)
+scores = torch.einsum("bhid,bhjd->bhij", q, k)  # 计算 query 与 key 的 dot product 得分。
 # d 消失：对 feature 做 dot product
 # [B, H, N, D_h] 与 [B, H, N, D_h] -> [B, H, N, N]
 
-attention = torch.softmax(scores, dim=-1)
+attention = torch.softmax(scores, dim=-1)  # 沿 source/key 轴归一化得分，得到 attention weights。
 
-context = torch.einsum("bhij,bhjd->bhid", attention, v)
+context = torch.einsum("bhij,bhjd->bhid", attention, v)  # 保存当前层或矩阵乘法的输出 tensor。
 # j 消失：按 attention 权重聚合 source/value position
 # [B, H, query_i, key_j] 与 [B, H, value_j, feature_d]
 # -> [B, H, query_i, feature_d]
@@ -1382,7 +1386,7 @@ $$
 第二类错误是把本来应该保留的标签漏在箭头右边。例如：
 
 ```python
-wrong = torch.einsum("bhid,bhjd->bhj", q, k)
+wrong = torch.einsum("bhid,bhjd->bhj", q, k)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 # i 被漏掉了，结果只保留 key_j，不再是完整的 query-key score table
 ```
 
@@ -1399,11 +1403,11 @@ wrong = torch.einsum("bhid,bhjd->bhj", q, k)
 einsum 不是“任何操作都比 @ 高级”。只有当轴语义复杂、需要多个 batch 轴或需要一次表达多个 contraction 时，它才明显更清楚。简单二维矩阵乘法使用 @ 往往更易读，也更容易让底层库使用专门优化的 GEMM kernel。调试时先用小 tensor 对比：
 
 ```python
-left = torch.randn(2, 3)
-right = torch.randn(3, 4)
+left = torch.randn(2, 3)  # 创建用于演示的 tensor。
+right = torch.randn(3, 4)  # 创建用于演示的 tensor。
 
-by_einsum = torch.einsum("ik,kj->ij", left, right)
-by_matmul = left @ right
+by_einsum = torch.einsum("ik,kj->ij", left, right)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
+by_matmul = left @ right  # 执行当前张量计算并保存结果。
 print(torch.allclose(by_einsum, by_matmul))  # True
 ```
 
@@ -1414,7 +1418,7 @@ print(torch.allclose(by_einsum, by_matmul))  # True
 例如：
 
 ```python
-x = torch.zeros(2, 3, 4)
+x = torch.zeros(2, 3, 4)  # 构造输入或监督信号 tensor。
 print(x.shape)  # [2, 3, 4]
 print(x.ndim)   # 3，rank 是 3
 ```
@@ -1442,10 +1446,10 @@ $$
 假设
 
 ```python
-x = torch.tensor([
-    [1.0, 2.0, 3.0],
-    [4.0, 5.0, 6.0],
-])
+x = torch.tensor([  # 构造输入或监督信号 tensor。
+    [1.0, 2.0, 3.0],  # 继续当前示例的 tensor 计算。
+    [4.0, 5.0, 6.0],  # 继续当前示例的 tensor 计算。
+])  # 继续当前示例的 tensor 计算。
 # shape = [2, 3], rank = 2
 ```
 
@@ -1480,7 +1484,7 @@ $$
 表示第 $i$ 个 query 对第 $j$ 个 key 的分数，那么标准写法是：
 
 ```python
-attention = torch.softmax(scores, dim=-1)
+attention = torch.softmax(scores, dim=-1)  # 沿 source/key 轴归一化得分，得到 attention weights。
 # [B, H, N, N]，最后一个 N 是 key/source position
 ```
 
@@ -1522,12 +1526,12 @@ dim 只是“轴的位置”；函数决定沿这条轴做什么。常见情况�
 例如，sum 的 dim 是 contraction 轴：
 
 ```python
-x = torch.randn(2, 3, 4)
+x = torch.randn(2, 3, 4)  # 构造输入或监督信号 tensor。
 
-y = x.sum(dim=-1)
+y = x.sum(dim=-1)  # 保存当前层或矩阵乘法的输出 tensor。
 print(y.shape)  # [2, 3]
 
-y_keep = x.sum(dim=-1, keepdim=True)
+y_keep = x.sum(dim=-1, keepdim=True)  # 执行当前张量计算并保存结果。
 print(y_keep.shape)  # [2, 3, 1]
 ```
 
@@ -1536,8 +1540,8 @@ keepdim=True 很有用，因为后续 broadcast 仍然能看到原来的轴位�
 cat 的 dim 不是求和轴，而是“沿哪条已有轴接长”：
 
 ```python
-a = torch.randn(2, 3)
-b = torch.randn(2, 5)
+a = torch.randn(2, 3)  # 创建用于演示的 tensor。
+b = torch.randn(2, 5)  # 构造参数 tensor，并保持注释中的 shape 约定。
 
 print(torch.cat([a, b], dim=1).shape)  # [2, 8]
 # dim=1：第二个轴接长，dim=0 的 size 必须相同
@@ -1546,7 +1550,7 @@ print(torch.cat([a, b], dim=1).shape)  # [2, 8]
 stack 则是在指定位置创建新轴：
 
 ```python
-a = torch.randn(2, 3)
+a = torch.randn(2, 3)  # 创建用于演示的 tensor。
 
 print(torch.stack([a, a], dim=0).shape)  # [2, 2, 3]
 print(torch.stack([a, a], dim=1).shape)  # [2, 2, 3]
@@ -1574,7 +1578,7 @@ scores: [B, H, query_i, key_j]
 
 ```python
 # 沿 j 求和，等价于对 attention 的 source/key 轴做 sum
-row_sum = torch.einsum("bhij->bhi", attention)
+row_sum = torch.einsum("bhij->bhi", attention)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 # [B, H, N, N] -> [B, H, N]
 ```
 
@@ -1626,13 +1630,13 @@ window 1: [0, 1, 1]  ->  -1*0 + 0*1 + 1*1 = 1
 PyTorch 代码把 shape 写得很明确：
 
 ```python
-import torch
-import torch.nn.functional as F
+import torch  # 导入所需的 Python 模块。
+import torch.nn.functional as F  # 导入所需的 Python 模块。
 
 x = torch.tensor([[[0.0, 0.0, 1.0, 1.0]]])  # [B, C, L] = [1, 1, 4]
 kernel = torch.tensor([[[-1.0, 0.0, 1.0]]])  # [C_out, C_in, K] = [1, 1, 3]
 
-y = F.conv1d(x, kernel)
+y = F.conv1d(x, kernel)  # 保存当前层或矩阵乘法的输出 tensor。
 print(y.shape)   # torch.Size([1, 1, 2])
 print(y[0, 0])   # tensor([1., 1.])
 ```
@@ -1650,17 +1654,17 @@ X: [B, C_in, H, W] = [2, 3, 32, 32]
 执行下面的卷积：
 
 ```python
-import torch
+import torch  # 导入所需的 Python 模块。
 
-conv = torch.nn.Conv2d(
-    in_channels=3,
-    out_channels=8,
-    kernel_size=3,
-    padding=1,
-)
+conv = torch.nn.Conv2d(  # 创建 neural network layer 或 module。
+    in_channels=3,  # 执行当前张量计算并保存结果。
+    out_channels=8,  # 执行当前张量计算并保存结果。
+    kernel_size=3,  # 执行当前张量计算并保存结果。
+    padding=1,  # 执行当前张量计算并保存结果。
+)  # 结束当前多行调用、容器或代码块。
 
-x = torch.randn(2, 3, 32, 32)
-y = conv(x)
+x = torch.randn(2, 3, 32, 32)  # 构造输入或监督信号 tensor。
+y = conv(x)  # 保存当前层或矩阵乘法的输出 tensor。
 
 print(conv.weight.shape)  # [8, 3, 3, 3]
 print(conv.bias.shape)    # [8]
@@ -1748,15 +1752,15 @@ x: [2, 4, 8]
 可以把它想成两张表：每张表 4 行，每行 8 个数字。一个 Linear(8, 24) 对最后一个 feature 轴做投影，把每个 token 变成 3D=24 个数字，再拆成 Q、K、V：
 
 ```python
-import torch
-from torch import nn
+import torch  # 导入所需的 Python 模块。
+from torch import nn  # 导入所需的 PyTorch API。
 
-B, N, D, H = 2, 4, 8, 2
-Dh = D // H
+B, N, D, H = 2, 4, 8, 2  # 执行当前张量计算并保存结果。
+Dh = D // H  # 执行当前张量计算并保存结果。
 x = torch.randn(B, N, D)              # [2, 4, 8]
 qkv = nn.Linear(D, 3 * D)(x)          # [2, 4, 24]
 qkv = qkv.reshape(B, N, 3, H, Dh)     # [2, 4, 3, 2, 4]
-q, k, v = qkv.permute(2, 0, 3, 1, 4)
+q, k, v = qkv.permute(2, 0, 3, 1, 4)  # 改变 shape 或轴顺序，并保留对应的 layout 语义。
                                       # each: [B, H, N, Dh] = [2, 2, 4, 4]
 ```
 
@@ -1797,20 +1801,20 @@ $$
 把相似度变成每个 query 的路由权重。除以 $\sqrt{D_h}$ 是为了避免 feature 维度变大后 dot product 的数值过大，让 softmax 过早饱和。
 
 ```python
-q = torch.tensor([[[[1.0, 0.0],
-                    [0.0, 1.0],
+q = torch.tensor([[[[1.0, 0.0],  # 创建 query tensor，最后一维是 feature width。
+                    [0.0, 1.0],  # 继续当前示例的 tensor 计算。
                     [1.0, 1.0]]]])  # [B,H,N,Dh] = [1,1,3,2]
-k = q.clone()
+k = q.clone()  # 创建 key tensor，最后一维是 feature width。
 
-scores = q @ k.transpose(-2, -1)
+scores = q @ k.transpose(-2, -1)  # 计算 query 与 key 的 dot product 得分。
 print(scores.shape)  # [1, 1, 3, 3]
-print(scores[0, 0])
+print(scores[0, 0])  # 打印结果，帮助观察值、shape 或 layout。
 # tensor([[1., 0., 1.],
 #         [0., 1., 1.],
 #         [1., 1., 2.]])
 
-attention = (scores / (2 ** 0.5)).softmax(dim=-1)
-print(attention.sum(dim=-1))
+attention = (scores / (2 ** 0.5)).softmax(dim=-1)  # 沿 source/key 轴归一化得分，得到 attention weights。
+print(attention.sum(dim=-1))  # 打印结果，帮助观察值、shape 或 layout。
 # every row is approximately tensor([1., 1., 1.])
 ```
 
@@ -1858,19 +1862,19 @@ $$
 第一行的第一维是 0.7*10 + 0.2*0 + 0.1*5 = 7.5。第一行主要读取第 0 个 token，所以结果更接近 V[0]；第二行主要读取第 1 个 token，所以第二维更接近 20。QK.T 负责产生连接表，AV 负责沿连接表搬运信息。两步都是矩阵乘法，但负责的语义不同。
 
 ```python
-A = torch.tensor([
-    [0.7, 0.2, 0.1],
-    [0.1, 0.8, 0.1],
-    [0.2, 0.2, 0.6],
-])
-V = torch.tensor([
-    [10.0, 0.0],
-    [0.0, 20.0],
-    [5.0, 5.0],
-])
+A = torch.tensor([  # 创建一个可读的示例 tensor。
+    [0.7, 0.2, 0.1],  # 继续当前示例的 tensor 计算。
+    [0.1, 0.8, 0.1],  # 继续当前示例的 tensor 计算。
+    [0.2, 0.2, 0.6],  # 继续当前示例的 tensor 计算。
+])  # 继续当前示例的 tensor 计算。
+V = torch.tensor([  # 创建一个可读的示例 tensor。
+    [10.0, 0.0],  # 继续当前示例的 tensor 计算。
+    [0.0, 20.0],  # 继续当前示例的 tensor 计算。
+    [5.0, 5.0],  # 继续当前示例的 tensor 计算。
+])  # 继续当前示例的 tensor 计算。
 
 context = A @ V                  # [N, N] @ [N, Dh] -> [N, Dh]
-print(context)
+print(context)  # 打印结果，帮助观察值、shape 或 layout。
 # tensor([[7.5000, 4.5000],
 #         [1.5000, 16.5000],
 #         [5.0000, 7.0000]])
@@ -1921,9 +1925,9 @@ CNN 的一个 3x3 kernel 只和附近像素交互；ViT 的一个 token 在一�
 **题 1：卷积输出。**
 
 ```python
-x = torch.randn(4, 3, 28, 28)
-conv = nn.Conv2d(3, 16, kernel_size=5, stride=2, padding=2)
-y = conv(x)
+x = torch.randn(4, 3, 28, 28)  # 构造输入或监督信号 tensor。
+conv = nn.Conv2d(3, 16, kernel_size=5, stride=2, padding=2)  # 创建 neural network layer 或 module。
+y = conv(x)  # 保存当前层或矩阵乘法的输出 tensor。
 ```
 
 输出 shape 是 [4, 16, 14, 14]。空间公式是
@@ -1940,9 +1944,9 @@ $$
 **题 2：attention score。**
 
 ```python
-q = torch.randn(8, 4, 128, 32)
-k = torch.randn(8, 4, 128, 32)
-scores = q @ k.transpose(-2, -1)
+q = torch.randn(8, 4, 128, 32)  # 创建 query tensor，最后一维是 feature width。
+k = torch.randn(8, 4, 128, 32)  # 创建 key tensor，最后一维是 feature width。
+scores = q @ k.transpose(-2, -1)  # 计算 query 与 key 的 dot product 得分。
 ```
 
 输出是 [8, 4, 128, 128]。32 被收缩，两个 128 分别留下 query 与 key positions。
@@ -2018,18 +2022,18 @@ $$
 PyTorch 中可以把核心计算写得很直白：
 
 ```python
-import math
-import torch
+import math  # 导入所需的 Python 模块。
+import torch  # 导入所需的 Python 模块。
 
 q = torch.randn(2, 4, 8, 16)  # [B, H, N, d_h]
-k = torch.randn(2, 4, 8, 16)
-v = torch.randn(2, 4, 8, 16)
+k = torch.randn(2, 4, 8, 16)  # 创建 key tensor，最后一维是 feature width。
+v = torch.randn(2, 4, 8, 16)  # 创建 value tensor，最后一维是 feature width。
 
-scores = q @ k.transpose(-2, -1) / math.sqrt(q.size(-1))
+scores = q @ k.transpose(-2, -1) / math.sqrt(q.size(-1))  # 计算 query 与 key 的 dot product 得分。
 # [2, 4, 8, 16] @ [2, 4, 16, 8] -> [2, 4, 8, 8]
 
-weights = torch.softmax(scores, dim=-1)
-output = weights @ v
+weights = torch.softmax(scores, dim=-1)  # 沿 source/key 轴归一化得分，得到 attention weights。
+output = weights @ v  # 保存当前层或矩阵乘法的输出 tensor。
 # [2, 4, 8, 8] @ [2, 4, 8, 16] -> [2, 4, 8, 16]
 ```
 
@@ -2071,13 +2075,13 @@ target query 2  ──┘
 ```python
 q = torch.randn(2, 4, 6, 16)  # decoder: [B, H, N_target, d_h]
 k = torch.randn(2, 4, 10, 16) # encoder:  [B, H, N_source, d_h]
-v = torch.randn(2, 4, 10, 16)
+v = torch.randn(2, 4, 10, 16)  # 创建 value tensor，最后一维是 feature width。
 
-scores = q @ k.transpose(-2, -1)
+scores = q @ k.transpose(-2, -1)  # 计算 query 与 key 的 dot product 得分。
 # [2, 4, 6, 16] @ [2, 4, 16, 10] -> [2, 4, 6, 10]
 
-weights = torch.softmax(scores, dim=-1)
-context = weights @ v
+weights = torch.softmax(scores, dim=-1)  # 沿 source/key 轴归一化得分，得到 attention weights。
+context = weights @ v  # 保存当前层或矩阵乘法的输出 tensor。
 # [2, 4, 6, 10] @ [2, 4, 10, 16] -> [2, 4, 6, 16]
 ```
 
@@ -2102,17 +2106,17 @@ $$
 代码中通常把不允许的位置填成负无穷：
 
 ```python
-B, H, N, d_h = 2, 4, 6, 16
-q = torch.randn(B, H, N, d_h)
-k = torch.randn(B, H, N, d_h)
-v = torch.randn(B, H, N, d_h)
+B, H, N, d_h = 2, 4, 6, 16  # 执行当前张量计算并保存结果。
+q = torch.randn(B, H, N, d_h)  # 创建 query tensor，最后一维是 feature width。
+k = torch.randn(B, H, N, d_h)  # 创建 key tensor，最后一维是 feature width。
+v = torch.randn(B, H, N, d_h)  # 创建 value tensor，最后一维是 feature width。
 
-scores = q @ k.transpose(-2, -1) / math.sqrt(d_h)
-allowed = torch.tril(torch.ones(N, N, dtype=torch.bool))
-scores = scores.masked_fill(~allowed, float("-inf"))
+scores = q @ k.transpose(-2, -1) / math.sqrt(d_h)  # 计算 query 与 key 的 dot product 得分。
+allowed = torch.tril(torch.ones(N, N, dtype=torch.bool))  # 创建用于演示的 tensor。
+scores = scores.masked_fill(~allowed, float("-inf"))  # 计算 query 与 key 的 dot product 得分。
 
-weights = torch.softmax(scores, dim=-1)
-output = weights @ v
+weights = torch.softmax(scores, dim=-1)  # 沿 source/key 轴归一化得分，得到 attention weights。
+output = weights @ v  # 保存当前层或矩阵乘法的输出 tensor。
 ```
 
 softmax 后，被填成负无穷的位置权重为 0，所以第 $i$ 行只会在前 $i+1$ 个 key 上分配概率。也可以把 padding mask 叠加进来：causal mask 负责时间方向，padding mask 负责无效 token，二者是不同约束。
@@ -2153,98 +2157,98 @@ decode:  输入 [d]，只算 d 的 Q/K/V
 下面是一个最小但完整的 decoder-only 骨架。它只有一个 decoder block，真实模型会把 `blocks` 堆叠成 $L$ 层；因此 `past_kv` 是“每层一份 `(K, V)`”，而不是全模型只有一份。
 
 ```python
-import math
-import torch
-from torch import nn
+import math  # 导入所需的 Python 模块。
+import torch  # 导入所需的 Python 模块。
+from torch import nn  # 导入所需的 PyTorch API。
 
-class DecoderBlock(nn.Module):
-    def __init__(self, d_model=32, n_heads=4):
-        super().__init__()
-        assert d_model % n_heads == 0
-        self.n_heads, self.d_h = n_heads, d_model // n_heads
-        self.ln1 = nn.LayerNorm(d_model)
-        self.qkv = nn.Linear(d_model, 3 * d_model)
-        self.proj = nn.Linear(d_model, d_model)
-        self.ln2 = nn.LayerNorm(d_model)
-        self.mlp = nn.Sequential(
-            nn.Linear(d_model, 4 * d_model), nn.GELU(),
-            nn.Linear(4 * d_model, d_model),
-        )
+class DecoderBlock(nn.Module):  # 定义一个可复用的 neural network module。
+    def __init__(self, d_model=32, n_heads=4):  # 定义一个封装当前计算流程的函数。
+        super().__init__()  # 初始化父类 nn.Module 的状态。
+        assert d_model % n_heads == 0  # 验证 shape、数值或两个实现的结果一致。
+        self.n_heads, self.d_h = n_heads, d_model // n_heads  # 保存 module 的子层或可训练参数。
+        self.ln1 = nn.LayerNorm(d_model)  # 保存 module 的子层或可训练参数。
+        self.qkv = nn.Linear(d_model, 3 * d_model)  # 保存 module 的子层或可训练参数。
+        self.proj = nn.Linear(d_model, d_model)  # 保存 module 的子层或可训练参数。
+        self.ln2 = nn.LayerNorm(d_model)  # 保存 module 的子层或可训练参数。
+        self.mlp = nn.Sequential(  # 保存 module 的子层或可训练参数。
+            nn.Linear(d_model, 4 * d_model), nn.GELU(),  # 执行当前 PyTorch 运算。
+            nn.Linear(4 * d_model, d_model),  # 执行当前 PyTorch 运算。
+        )  # 结束当前多行调用、容器或代码块。
 
-    def forward(self, x, past_kv=None):
+    def forward(self, x, past_kv=None):  # 定义一个封装当前计算流程的函数。
         # x: [B, T, D]; K/V: [B, H, T, d_h]
-        h = self.ln1(x)
-        B, T, D = h.shape
-        q, k, v = self.qkv(h).chunk(3, dim=-1)
-        shape = (B, T, self.n_heads, self.d_h)
-        q = q.view(shape).transpose(1, 2)
-        k = k.view(shape).transpose(1, 2)
-        v = v.view(shape).transpose(1, 2)
+        h = self.ln1(x)  # 执行当前张量计算并保存结果。
+        B, T, D = h.shape  # 读取 tensor 的元数据。
+        q, k, v = self.qkv(h).chunk(3, dim=-1)  # 执行当前张量计算并保存结果。
+        shape = (B, T, self.n_heads, self.d_h)  # 执行当前张量计算并保存结果。
+        q = q.view(shape).transpose(1, 2)  # 创建 query tensor，最后一维是 feature width。
+        k = k.view(shape).transpose(1, 2)  # 创建 key tensor，最后一维是 feature width。
+        v = v.view(shape).transpose(1, 2)  # 创建 value tensor，最后一维是 feature width。
 
-        past_len = 0 if past_kv is None else past_kv[0].size(2)
-        if past_kv is not None:
-            k = torch.cat((past_kv[0], k), dim=2)
-            v = torch.cat((past_kv[1], v), dim=2)
+        past_len = 0 if past_kv is None else past_kv[0].size(2)  # 执行当前张量计算并保存结果。
+        if past_kv is not None:  # 根据当前条件选择是否执行这一分支。
+            k = torch.cat((past_kv[0], k), dim=2)  # 创建 key tensor，最后一维是 feature width。
+            v = torch.cat((past_kv[1], v), dim=2)  # 创建 value tensor，最后一维是 feature width。
 
         # Query at position past_len+i may read key positions <= past_len+i.
-        S = k.size(2)
-        q_pos = past_len + torch.arange(T, device=x.device)
-        k_pos = torch.arange(S, device=x.device)
-        allowed = k_pos[None, :] <= q_pos[:, None]
-        scores = q @ k.transpose(-2, -1) / math.sqrt(self.d_h)
-        scores = scores.masked_fill(~allowed[None, None], float("-inf"))
-        attn = torch.softmax(scores, dim=-1)
-        y = attn @ v
-        y = y.transpose(1, 2).contiguous().view(B, T, D)
+        S = k.size(2)  # 执行当前张量计算并保存结果。
+        q_pos = past_len + torch.arange(T, device=x.device)  # 执行当前张量计算并保存结果。
+        k_pos = torch.arange(S, device=x.device)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
+        allowed = k_pos[None, :] <= q_pos[:, None]  # 执行当前张量计算并保存结果。
+        scores = q @ k.transpose(-2, -1) / math.sqrt(self.d_h)  # 计算 query 与 key 的 dot product 得分。
+        scores = scores.masked_fill(~allowed[None, None], float("-inf"))  # 计算 query 与 key 的 dot product 得分。
+        attn = torch.softmax(scores, dim=-1)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
+        y = attn @ v  # 保存当前层或矩阵乘法的输出 tensor。
+        y = y.transpose(1, 2).contiguous().view(B, T, D)  # 保存当前层或矩阵乘法的输出 tensor。
 
-        x = x + self.proj(y)
-        x = x + self.mlp(self.ln2(x))
-        return x, (k, v)
+        x = x + self.proj(y)  # 构造输入或监督信号 tensor。
+        x = x + self.mlp(self.ln2(x))  # 构造输入或监督信号 tensor。
+        return x, (k, v)  # 返回当前函数的计算结果。
 
-class TinyDecoderOnlyLM(nn.Module):
-    def __init__(self, vocab=100, max_len=128, d_model=32, n_heads=4):
-        super().__init__()
-        self.tok_emb = nn.Embedding(vocab, d_model)
-        self.pos_emb = nn.Embedding(max_len, d_model)
-        self.blocks = nn.ModuleList([DecoderBlock(d_model, n_heads)])
-        self.ln_f = nn.LayerNorm(d_model)
-        self.lm_head = nn.Linear(d_model, vocab, bias=False)
+class TinyDecoderOnlyLM(nn.Module):  # 定义一个可复用的 neural network module。
+    def __init__(self, vocab=100, max_len=128, d_model=32, n_heads=4):  # 定义一个封装当前计算流程的函数。
+        super().__init__()  # 初始化父类 nn.Module 的状态。
+        self.tok_emb = nn.Embedding(vocab, d_model)  # 保存 module 的子层或可训练参数。
+        self.pos_emb = nn.Embedding(max_len, d_model)  # 保存 module 的子层或可训练参数。
+        self.blocks = nn.ModuleList([DecoderBlock(d_model, n_heads)])  # 保存 module 的子层或可训练参数。
+        self.ln_f = nn.LayerNorm(d_model)  # 保存 module 的子层或可训练参数。
+        self.lm_head = nn.Linear(d_model, vocab, bias=False)  # 保存 module 的子层或可训练参数。
 
-    def forward(self, input_ids, past_kv=None):
-        B, T = input_ids.shape
-        past_len = 0 if past_kv is None else past_kv[0][0].size(2)
-        pos = torch.arange(past_len, past_len + T, device=input_ids.device)
-        x = self.tok_emb(input_ids) + self.pos_emb(pos)[None, :, :]
+    def forward(self, input_ids, past_kv=None):  # 定义一个封装当前计算流程的函数。
+        B, T = input_ids.shape  # 读取 tensor 的元数据。
+        past_len = 0 if past_kv is None else past_kv[0][0].size(2)  # 执行当前张量计算并保存结果。
+        pos = torch.arange(past_len, past_len + T, device=input_ids.device)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
+        x = self.tok_emb(input_ids) + self.pos_emb(pos)[None, :, :]  # 构造输入或监督信号 tensor。
 
-        new_cache = []
-        for block, layer_cache in zip(self.blocks, past_kv or [None]):
-            x, layer_cache = block(x, layer_cache)
-            new_cache.append(layer_cache)
+        new_cache = []  # 执行当前张量计算并保存结果。
+        for block, layer_cache in zip(self.blocks, past_kv or [None]):  # 遍历当前 batch、时间步或数据集合。
+            x, layer_cache = block(x, layer_cache)  # 执行当前张量计算并保存结果。
+            new_cache.append(layer_cache)  # 继续当前示例的 tensor 计算。
         logits = self.lm_head(self.ln_f(x))  # [B, T, vocab]
-        return logits, new_cache
+        return logits, new_cache  # 返回当前函数的计算结果。
 
-torch.manual_seed(0)
-model = TinyDecoderOnlyLM().eval()
-prompt = torch.tensor([[1, 2, 3]])
+torch.manual_seed(0)  # 固定随机种子，让示例结果可复现。
+model = TinyDecoderOnlyLM().eval()  # 执行当前张量计算并保存结果。
+prompt = torch.tensor([[1, 2, 3]])  # 创建一个可读的示例 tensor。
 
-with torch.no_grad():
+with torch.no_grad():  # 在这个上下文中执行临时的计算或资源管理。
     # Prefill: process the prompt and cache every layer's K/V.
-    logits, cache = model(prompt)
-    next_id = logits[:, -1:].argmax(dim=-1)
-    generated = prompt.clone()
+    logits, cache = model(prompt)  # 执行当前张量计算并保存结果。
+    next_id = logits[:, -1:].argmax(dim=-1)  # 执行当前张量计算并保存结果。
+    generated = prompt.clone()  # 执行当前张量计算并保存结果。
 
     # Decode: consume one sampled token per iteration.
-    for _ in range(2):
-        current = next_id
-        logits, cache = model(current, cache)
-        generated = torch.cat((generated, current), dim=1)
+    for _ in range(2):  # 遍历当前 batch、时间步或数据集合。
+        current = next_id  # 执行当前张量计算并保存结果。
+        logits, cache = model(current, cache)  # 执行当前张量计算并保存结果。
+        generated = torch.cat((generated, current), dim=1)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 
         # Full-prefix computation is only a correctness reference.
-        reference, _ = model(generated)
-        assert torch.allclose(logits[:, -1], reference[:, -1], atol=1e-5)
+        reference, _ = model(generated)  # 执行当前张量计算并保存结果。
+        assert torch.allclose(logits[:, -1], reference[:, -1], atol=1e-5)  # 验证 shape、数值或两个实现的结果一致。
 
-        next_id = logits[:, -1:].argmax(dim=-1)
-        print("cache K:", cache[0][0].shape)
+        next_id = logits[:, -1:].argmax(dim=-1)  # 执行当前张量计算并保存结果。
+        print("cache K:", cache[0][0].shape)  # 打印结果，帮助观察值、shape 或 layout。
 ```
 
 代码中最容易混淆的三点：
@@ -2289,18 +2293,18 @@ KV group: k0 k0 k0 k0 | k1 k1 k1 k1
 教育版代码可以显式复制 K/V head：
 
 ```python
-B, H_q, H_kv, N, d_h = 2, 8, 2, 16, 64
-q = torch.randn(B, H_q, N, d_h)
-k = torch.randn(B, H_kv, N, d_h)
-v = torch.randn(B, H_kv, N, d_h)
+B, H_q, H_kv, N, d_h = 2, 8, 2, 16, 64  # 执行当前张量计算并保存结果。
+q = torch.randn(B, H_q, N, d_h)  # 创建 query tensor，最后一维是 feature width。
+k = torch.randn(B, H_kv, N, d_h)  # 创建 key tensor，最后一维是 feature width。
+v = torch.randn(B, H_kv, N, d_h)  # 创建 value tensor，最后一维是 feature width。
 
-group_size = H_q // H_kv
-k_for_q = k.repeat_interleave(group_size, dim=1)
-v_for_q = v.repeat_interleave(group_size, dim=1)
+group_size = H_q // H_kv  # 执行当前张量计算并保存结果。
+k_for_q = k.repeat_interleave(group_size, dim=1)  # 执行当前张量计算并保存结果。
+v_for_q = v.repeat_interleave(group_size, dim=1)  # 执行当前张量计算并保存结果。
 
-scores = q @ k_for_q.transpose(-2, -1)
-weights = torch.softmax(scores / math.sqrt(d_h), dim=-1)
-out = weights @ v_for_q
+scores = q @ k_for_q.transpose(-2, -1)  # 计算 query 与 key 的 dot product 得分。
+weights = torch.softmax(scores / math.sqrt(d_h), dim=-1)  # 沿 source/key 轴归一化得分，得到 attention weights。
+out = weights @ v_for_q  # 保存当前层或矩阵乘法的输出 tensor。
 # scores: [B, H_q, N, N]
 # out:    [B, H_q, N, d_h]
 ```
@@ -2366,20 +2370,20 @@ $$
 一个单头、单 batch 的教学版循环：
 
 ```python
-def deltanet_scan(q_seq, k_seq, v_seq, beta):
+def deltanet_scan(q_seq, k_seq, v_seq, beta):  # 定义一个封装当前计算流程的函数。
     # q_seq/k_seq/v_seq: [T, d]
     # beta: [T]，每个时间步的写入强度
-    T, d = q_seq.shape
-    state = torch.zeros(d, d, dtype=q_seq.dtype)
-    outputs = []
+    T, d = q_seq.shape  # 读取 tensor 的元数据。
+    state = torch.zeros(d, d, dtype=q_seq.dtype)  # 创建用于演示的 tensor。
+    outputs = []  # 执行当前张量计算并保存结果。
 
-    for t in range(T):
+    for t in range(T):  # 遍历当前 batch、时间步或数据集合。
         old_value = state @ k_seq[t]             # [d]
         error = v_seq[t] - old_value              # [d]
-        state = state + beta[t] * torch.outer(error, k_seq[t])
+        state = state + beta[t] * torch.outer(error, k_seq[t])  # 执行当前张量计算并保存结果。
         outputs.append(state @ q_seq[t])          # [d]
 
-    return torch.stack(outputs), state
+    return torch.stack(outputs), state  # 返回当前函数的计算结果。
 ```
 
 这个示例是为了看清 data flow，不是生产级 fused DeltaNet kernel。真正的 DeltaNet 会加入 head 维度、投影、归一化以及并行或 chunkwise 训练算法。原始 DeltaNet 论文将它描述为使用 delta rule 的 linear Transformer；后续 Gated DeltaNet 又加入了更灵活的 gating。可参考 [DeltaNet 原论文](https://arxiv.org/abs/2406.06484) 和 [Gated DeltaNet 论文](https://arxiv.org/abs/2412.06464)。
@@ -2492,50 +2496,50 @@ model.eval() + no_grad() -> validation metrics
 先写一个只处理“每个样本一个类别标签”的 helper。MLP 和 CNN 都可以共用它：
 
 ```python
-import torch
-from torch import nn
+import torch  # 导入所需的 Python 模块。
+from torch import nn  # 导入所需的 PyTorch API。
 
-def train_one_epoch(model, loader, loss_fn, optimizer, device="cpu"):
-    model.train()
-    total_loss = 0.0
-    total_correct = 0
-    total_items = 0
+def train_one_epoch(model, loader, loss_fn, optimizer, device="cpu"):  # 定义一个封装当前计算流程的函数。
+    model.train()  # 继续当前示例的 tensor 计算。
+    total_loss = 0.0  # 更新当前统计量或数据分片。
+    total_correct = 0  # 更新当前统计量或数据分片。
+    total_items = 0  # 更新当前统计量或数据分片。
 
-    for xb, yb in loader:
-        xb, yb = xb.to(device), yb.to(device)
+    for xb, yb in loader:  # 遍历当前 batch、时间步或数据集合。
+        xb, yb = xb.to(device), yb.to(device)  # 执行当前张量计算并保存结果。
 
-        optimizer.zero_grad(set_to_none=True)
-        logits = model(xb)
-        loss = loss_fn(logits, yb)
-        loss.backward()
-        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)  # 更新或清理 optimizer 的状态。
+        logits = model(xb)  # 执行当前张量计算并保存结果。
+        loss = loss_fn(logits, yb)  # 执行当前张量计算并保存结果。
+        loss.backward()  # 反向传播，计算所有可训练参数的 gradient。
+        optimizer.step()  # 更新或清理 optimizer 的状态。
 
-        batch_size = yb.shape[0]
-        total_loss += loss.item() * batch_size
-        total_correct += (logits.argmax(dim=1) == yb).sum().item()
-        total_items += batch_size
+        batch_size = yb.shape[0]  # 更新当前统计量或数据分片。
+        total_loss += loss.item() * batch_size  # 更新当前统计量或数据分片。
+        total_correct += (logits.argmax(dim=1) == yb).sum().item()  # 更新当前统计量或数据分片。
+        total_items += batch_size  # 更新当前统计量或数据分片。
 
-    return total_loss / total_items, total_correct / total_items
+    return total_loss / total_items, total_correct / total_items  # 返回当前函数的计算结果。
 
 
-@torch.no_grad()
-def evaluate(model, loader, loss_fn, device="cpu"):
-    model.eval()
-    total_loss = 0.0
-    total_correct = 0
-    total_items = 0
+@torch.no_grad()  # 为下面的函数添加装饰器行为。
+def evaluate(model, loader, loss_fn, device="cpu"):  # 定义一个封装当前计算流程的函数。
+    model.eval()  # 继续当前示例的 tensor 计算。
+    total_loss = 0.0  # 更新当前统计量或数据分片。
+    total_correct = 0  # 更新当前统计量或数据分片。
+    total_items = 0  # 更新当前统计量或数据分片。
 
-    for xb, yb in loader:
-        xb, yb = xb.to(device), yb.to(device)
-        logits = model(xb)
-        loss = loss_fn(logits, yb)
+    for xb, yb in loader:  # 遍历当前 batch、时间步或数据集合。
+        xb, yb = xb.to(device), yb.to(device)  # 执行当前张量计算并保存结果。
+        logits = model(xb)  # 执行当前张量计算并保存结果。
+        loss = loss_fn(logits, yb)  # 执行当前张量计算并保存结果。
 
-        batch_size = yb.shape[0]
-        total_loss += loss.item() * batch_size
-        total_correct += (logits.argmax(dim=1) == yb).sum().item()
-        total_items += batch_size
+        batch_size = yb.shape[0]  # 更新当前统计量或数据分片。
+        total_loss += loss.item() * batch_size  # 更新当前统计量或数据分片。
+        total_correct += (logits.argmax(dim=1) == yb).sum().item()  # 更新当前统计量或数据分片。
+        total_items += batch_size  # 更新当前统计量或数据分片。
 
-    return total_loss / total_items, total_correct / total_items
+    return total_loss / total_items, total_correct / total_items  # 返回当前函数的计算结果。
 ```
 
 这里有三个容易漏掉的动作：
@@ -2553,57 +2557,57 @@ def evaluate(model, loader, loss_fn, device="cpu"):
 先做一个没有图像和序列结构的任务。数据是三个二维高斯 blob；每个样本只有两个 features，所以 MLP 的输入 shape 是 [B, 2]。
 
 ```python
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset  # 导入所需的 PyTorch API。
 
-def make_blobs(n, seed):
-    generator = torch.Generator().manual_seed(seed)
-    centers = torch.tensor([
-        [-2.0, -1.0],
-        [2.0, -1.0],
-        [0.0, 2.0],
-    ])
-    labels = torch.randint(0, 3, (n,), generator=generator)
-    features = centers[labels] + 0.55 * torch.randn(
-        n, 2, generator=generator
-    )
-    return features, labels
+def make_blobs(n, seed):  # 定义一个封装当前计算流程的函数。
+    generator = torch.Generator().manual_seed(seed)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
+    centers = torch.tensor([  # 创建一个可读的示例 tensor。
+        [-2.0, -1.0],  # 继续当前示例的 tensor 计算。
+        [2.0, -1.0],  # 继续当前示例的 tensor 计算。
+        [0.0, 2.0],  # 继续当前示例的 tensor 计算。
+    ])  # 继续当前示例的 tensor 计算。
+    labels = torch.randint(0, 3, (n,), generator=generator)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
+    features = centers[labels] + 0.55 * torch.randn(  # 创建用于演示的 tensor。
+        n, 2, generator=generator  # 执行当前张量计算并保存结果。
+    )  # 结束当前多行调用、容器或代码块。
+    return features, labels  # 返回当前函数的计算结果。
 
 
-x, y = make_blobs(1200, seed=0)
-train_x, val_x = x[:1000], x[1000:]
-train_y, val_y = y[:1000], y[1000:]
+x, y = make_blobs(1200, seed=0)  # 执行当前张量计算并保存结果。
+train_x, val_x = x[:1000], x[1000:]  # 更新当前统计量或数据分片。
+train_y, val_y = y[:1000], y[1000:]  # 更新当前统计量或数据分片。
 
-train_loader = DataLoader(
-    TensorDataset(train_x, train_y),
-    batch_size=64,
-    shuffle=True,
-)
-val_loader = DataLoader(
-    TensorDataset(val_x, val_y),
-    batch_size=256,
-)
+train_loader = DataLoader(  # 更新当前统计量或数据分片。
+    TensorDataset(train_x, train_y),  # 继续当前示例的 tensor 计算。
+    batch_size=64,  # 更新当前统计量或数据分片。
+    shuffle=True,  # 执行当前张量计算并保存结果。
+)  # 结束当前多行调用、容器或代码块。
+val_loader = DataLoader(  # 更新当前统计量或数据分片。
+    TensorDataset(val_x, val_y),  # 继续当前示例的 tensor 计算。
+    batch_size=256,  # 更新当前统计量或数据分片。
+)  # 结束当前多行调用、容器或代码块。
 
-mlp = nn.Sequential(
-    nn.Linear(2, 32),
-    nn.ReLU(),
-    nn.Linear(32, 3),
-)
-loss_fn = nn.CrossEntropyLoss()
-optimizer = torch.optim.AdamW(mlp.parameters(), lr=1e-2)
+mlp = nn.Sequential(  # 创建 neural network layer 或 module。
+    nn.Linear(2, 32),  # 执行当前 PyTorch 运算。
+    nn.ReLU(),  # 执行当前 PyTorch 运算。
+    nn.Linear(32, 3),  # 执行当前 PyTorch 运算。
+)  # 结束当前多行调用、容器或代码块。
+loss_fn = nn.CrossEntropyLoss()  # 创建 neural network layer 或 module。
+optimizer = torch.optim.AdamW(mlp.parameters(), lr=1e-2)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 
-for epoch in range(20):
-    train_loss, train_acc = train_one_epoch(
-        mlp, train_loader, loss_fn, optimizer
-    )
-    val_loss, val_acc = evaluate(mlp, val_loader, loss_fn)
-    if epoch == 0 or (epoch + 1) % 5 == 0:
-        print(
-            epoch + 1,
-            train_loss,
-            train_acc,
-            val_loss,
-            val_acc,
-        )
+for epoch in range(20):  # 遍历当前 batch、时间步或数据集合。
+    train_loss, train_acc = train_one_epoch(  # 更新当前统计量或数据分片。
+        mlp, train_loader, loss_fn, optimizer  # 继续当前示例的 tensor 计算。
+    )  # 结束当前多行调用、容器或代码块。
+    val_loss, val_acc = evaluate(mlp, val_loader, loss_fn)  # 更新当前统计量或数据分片。
+    if epoch == 0 or (epoch + 1) % 5 == 0:  # 根据当前条件选择是否执行这一分支。
+        print(  # 打印结果，帮助观察值、shape 或 layout。
+            epoch + 1,  # 继续当前示例的 tensor 计算。
+            train_loss,  # 继续当前示例的 tensor 计算。
+            train_acc,  # 继续当前示例的 tensor 计算。
+            val_loss,  # 继续当前示例的 tensor 计算。
+            val_acc,  # 继续当前示例的 tensor 计算。
+        )  # 结束当前多行调用、容器或代码块。
 ```
 
 shape 追踪是：
@@ -2634,51 +2638,51 @@ $$
 现在把输入换成图像。为了让示例离线可运行，我们造两类 16x16 单通道图片：class 0 中间有一条竖条，class 1 中间有一条横条，再加一点噪声。任务的关键不是数据集，而是输入 shape 和 CNN 如何保留局部空间结构。
 
 ```python
-def make_bars(n, seed):
-    generator = torch.Generator().manual_seed(seed)
-    images = 0.15 * torch.randn(
-        n, 1, 16, 16, generator=generator
-    )
-    labels = torch.randint(0, 2, (n,), generator=generator)
+def make_bars(n, seed):  # 定义一个封装当前计算流程的函数。
+    generator = torch.Generator().manual_seed(seed)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
+    images = 0.15 * torch.randn(  # 创建用于演示的 tensor。
+        n, 1, 16, 16, generator=generator  # 执行当前张量计算并保存结果。
+    )  # 结束当前多行调用、容器或代码块。
+    labels = torch.randint(0, 2, (n,), generator=generator)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 
-    vertical = labels == 0
-    horizontal = labels == 1
-    images[vertical, 0, :, 7:9] += 1.0
-    images[horizontal, 0, 7:9, :] += 1.0
-    return images, labels
+    vertical = labels == 0  # 执行当前张量计算并保存结果。
+    horizontal = labels == 1  # 执行当前张量计算并保存结果。
+    images[vertical, 0, :, 7:9] += 1.0  # 执行当前张量计算并保存结果。
+    images[horizontal, 0, 7:9, :] += 1.0  # 执行当前张量计算并保存结果。
+    return images, labels  # 返回当前函数的计算结果。
 
 
-train_x, train_y = make_bars(1000, seed=1)
-val_x, val_y = make_bars(240, seed=2)
-train_loader = DataLoader(
-    TensorDataset(train_x, train_y),
-    batch_size=64,
-    shuffle=True,
-)
-val_loader = DataLoader(
-    TensorDataset(val_x, val_y),
-    batch_size=256,
-)
+train_x, train_y = make_bars(1000, seed=1)  # 更新当前统计量或数据分片。
+val_x, val_y = make_bars(240, seed=2)  # 更新当前统计量或数据分片。
+train_loader = DataLoader(  # 更新当前统计量或数据分片。
+    TensorDataset(train_x, train_y),  # 继续当前示例的 tensor 计算。
+    batch_size=64,  # 更新当前统计量或数据分片。
+    shuffle=True,  # 执行当前张量计算并保存结果。
+)  # 结束当前多行调用、容器或代码块。
+val_loader = DataLoader(  # 更新当前统计量或数据分片。
+    TensorDataset(val_x, val_y),  # 继续当前示例的 tensor 计算。
+    batch_size=256,  # 更新当前统计量或数据分片。
+)  # 结束当前多行调用、容器或代码块。
 
-cnn = nn.Sequential(
-    nn.Conv2d(1, 8, kernel_size=3, padding=1),
-    nn.ReLU(),
-    nn.MaxPool2d(kernel_size=2),
-    nn.Conv2d(8, 16, kernel_size=3, padding=1),
-    nn.ReLU(),
-    nn.AdaptiveAvgPool2d(1),
-    nn.Flatten(),
-    nn.Linear(16, 2),
-)
-loss_fn = nn.CrossEntropyLoss()
-optimizer = torch.optim.AdamW(cnn.parameters(), lr=1e-3)
+cnn = nn.Sequential(  # 创建 neural network layer 或 module。
+    nn.Conv2d(1, 8, kernel_size=3, padding=1),  # 执行当前张量计算并保存结果。
+    nn.ReLU(),  # 执行当前 PyTorch 运算。
+    nn.MaxPool2d(kernel_size=2),  # 执行当前张量计算并保存结果。
+    nn.Conv2d(8, 16, kernel_size=3, padding=1),  # 执行当前张量计算并保存结果。
+    nn.ReLU(),  # 执行当前 PyTorch 运算。
+    nn.AdaptiveAvgPool2d(1),  # 执行当前 PyTorch 运算。
+    nn.Flatten(),  # 执行当前 PyTorch 运算。
+    nn.Linear(16, 2),  # 执行当前 PyTorch 运算。
+)  # 结束当前多行调用、容器或代码块。
+loss_fn = nn.CrossEntropyLoss()  # 创建 neural network layer 或 module。
+optimizer = torch.optim.AdamW(cnn.parameters(), lr=1e-3)  # 创建 neural network layer 或 module。
 
-for epoch in range(8):
-    train_loss, train_acc = train_one_epoch(
-        cnn, train_loader, loss_fn, optimizer
-    )
-    val_loss, val_acc = evaluate(cnn, val_loader, loss_fn)
-    print(epoch + 1, train_loss, train_acc, val_loss, val_acc)
+for epoch in range(8):  # 遍历当前 batch、时间步或数据集合。
+    train_loss, train_acc = train_one_epoch(  # 更新当前统计量或数据分片。
+        cnn, train_loader, loss_fn, optimizer  # 继续当前示例的 tensor 计算。
+    )  # 结束当前多行调用、容器或代码块。
+    val_loss, val_acc = evaluate(cnn, val_loader, loss_fn)  # 更新当前统计量或数据分片。
+    print(epoch + 1, train_loss, train_acc, val_loss, val_acc)  # 打印结果，帮助观察值、shape 或 layout。
 ```
 
 shape 追踪：
@@ -2711,100 +2715,100 @@ target:  [t1, t2, t3, t4]
 下面构造一个简单规律：词表中的下一个 token 总是当前 token 加 1（模 10）。模型没有见过某个具体序列，也必须从上下文和位置中学会这个 transition。
 
 ```python
-import torch.nn.functional as F
+import torch.nn.functional as F  # 导入所需的 Python 模块。
 
-def make_incrementing_sequences(n, seq_len, vocab_size, seed):
-    generator = torch.Generator().manual_seed(seed)
-    starts = torch.randint(0, vocab_size, (n,), generator=generator)
-    positions = torch.arange(seq_len)
-    tokens = (starts[:, None] + positions[None, :]) % vocab_size
-    return tokens[:, :-1], tokens[:, 1:]
-
-
-class TinyTransformerLM(nn.Module):
-    def __init__(self, vocab_size, d_model=32, nhead=4, layers=2):
-        super().__init__()
-        self.token_embedding = nn.Embedding(vocab_size, d_model)
-        self.position_embedding = nn.Parameter(
-            torch.zeros(1, 64, d_model)
-        )
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=4 * d_model,
-            dropout=0.0,
-            batch_first=True,
-            norm_first=True,
-        )
-        self.encoder = nn.TransformerEncoder(encoder_layer, layers)
-        self.lm_head = nn.Linear(d_model, vocab_size)
-
-    def forward(self, input_ids):
-        batch_size, length = input_ids.shape
-        x = self.token_embedding(input_ids)
-        x = x + self.position_embedding[:, :length]
-
-        causal_mask = torch.triu(
-            torch.full(
-                (length, length),
-                float("-inf"),
-                device=input_ids.device,
-            ),
-            diagonal=1,
-        )
-        hidden = self.encoder(x, mask=causal_mask)
-        return self.lm_head(hidden)
+def make_incrementing_sequences(n, seq_len, vocab_size, seed):  # 定义一个封装当前计算流程的函数。
+    generator = torch.Generator().manual_seed(seed)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
+    starts = torch.randint(0, vocab_size, (n,), generator=generator)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
+    positions = torch.arange(seq_len)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
+    tokens = (starts[:, None] + positions[None, :]) % vocab_size  # 执行当前张量计算并保存结果。
+    return tokens[:, :-1], tokens[:, 1:]  # 返回当前函数的计算结果。
 
 
-vocab_size = 10
-train_x, train_y = make_incrementing_sequences(
-    n=2000,
-    seq_len=12,
-    vocab_size=vocab_size,
-    seed=3,
-)
-val_x, val_y = make_incrementing_sequences(
-    n=400,
-    seq_len=12,
-    vocab_size=vocab_size,
-    seed=4,
-)
-train_loader = DataLoader(
-    TensorDataset(train_x, train_y),
-    batch_size=64,
-    shuffle=True,
-)
-val_loader = DataLoader(
-    TensorDataset(val_x, val_y),
-    batch_size=256,
-)
+class TinyTransformerLM(nn.Module):  # 定义一个可复用的 neural network module。
+    def __init__(self, vocab_size, d_model=32, nhead=4, layers=2):  # 定义一个封装当前计算流程的函数。
+        super().__init__()  # 初始化父类 nn.Module 的状态。
+        self.token_embedding = nn.Embedding(vocab_size, d_model)  # 保存 module 的子层或可训练参数。
+        self.position_embedding = nn.Parameter(  # 保存 module 的子层或可训练参数。
+            torch.zeros(1, 64, d_model)  # 执行当前 PyTorch 运算。
+        )  # 结束当前多行调用、容器或代码块。
+        encoder_layer = nn.TransformerEncoderLayer(  # 创建 neural network layer 或 module。
+            d_model=d_model,  # 执行当前张量计算并保存结果。
+            nhead=nhead,  # 执行当前张量计算并保存结果。
+            dim_feedforward=4 * d_model,  # 执行当前张量计算并保存结果。
+            dropout=0.0,  # 执行当前张量计算并保存结果。
+            batch_first=True,  # 更新当前统计量或数据分片。
+            norm_first=True,  # 执行当前张量计算并保存结果。
+        )  # 结束当前多行调用、容器或代码块。
+        self.encoder = nn.TransformerEncoder(encoder_layer, layers)  # 保存 module 的子层或可训练参数。
+        self.lm_head = nn.Linear(d_model, vocab_size)  # 保存 module 的子层或可训练参数。
 
-lm = TinyTransformerLM(vocab_size)
-optimizer = torch.optim.AdamW(lm.parameters(), lr=3e-3)
+    def forward(self, input_ids):  # 定义一个封装当前计算流程的函数。
+        batch_size, length = input_ids.shape  # 更新当前统计量或数据分片。
+        x = self.token_embedding(input_ids)  # 构造输入或监督信号 tensor。
+        x = x + self.position_embedding[:, :length]  # 构造输入或监督信号 tensor。
 
-for epoch in range(10):
-    lm.train()
-    total_loss = 0.0
-    total_tokens = 0
-    for input_ids, target_ids in train_loader:
-        optimizer.zero_grad(set_to_none=True)
+        causal_mask = torch.triu(  # 调用 PyTorch 运算得到新的 tensor 或统计量。
+            torch.full(  # 执行当前 PyTorch 运算。
+                (length, length),  # 继续当前示例的 tensor 计算。
+                float("-inf"),  # 继续当前示例的 tensor 计算。
+                device=input_ids.device,  # 执行当前张量计算并保存结果。
+            ),  # 结束当前多行调用、容器或代码块。
+            diagonal=1,  # 执行当前张量计算并保存结果。
+        )  # 结束当前多行调用、容器或代码块。
+        hidden = self.encoder(x, mask=causal_mask)  # 执行当前张量计算并保存结果。
+        return self.lm_head(hidden)  # 返回当前函数的计算结果。
+
+
+vocab_size = 10  # 执行当前张量计算并保存结果。
+train_x, train_y = make_incrementing_sequences(  # 更新当前统计量或数据分片。
+    n=2000,  # 执行当前张量计算并保存结果。
+    seq_len=12,  # 执行当前张量计算并保存结果。
+    vocab_size=vocab_size,  # 执行当前张量计算并保存结果。
+    seed=3,  # 执行当前张量计算并保存结果。
+)  # 结束当前多行调用、容器或代码块。
+val_x, val_y = make_incrementing_sequences(  # 更新当前统计量或数据分片。
+    n=400,  # 执行当前张量计算并保存结果。
+    seq_len=12,  # 执行当前张量计算并保存结果。
+    vocab_size=vocab_size,  # 执行当前张量计算并保存结果。
+    seed=4,  # 执行当前张量计算并保存结果。
+)  # 结束当前多行调用、容器或代码块。
+train_loader = DataLoader(  # 更新当前统计量或数据分片。
+    TensorDataset(train_x, train_y),  # 继续当前示例的 tensor 计算。
+    batch_size=64,  # 更新当前统计量或数据分片。
+    shuffle=True,  # 执行当前张量计算并保存结果。
+)  # 结束当前多行调用、容器或代码块。
+val_loader = DataLoader(  # 更新当前统计量或数据分片。
+    TensorDataset(val_x, val_y),  # 继续当前示例的 tensor 计算。
+    batch_size=256,  # 更新当前统计量或数据分片。
+)  # 结束当前多行调用、容器或代码块。
+
+lm = TinyTransformerLM(vocab_size)  # 执行当前张量计算并保存结果。
+optimizer = torch.optim.AdamW(lm.parameters(), lr=3e-3)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
+
+for epoch in range(10):  # 遍历当前 batch、时间步或数据集合。
+    lm.train()  # 继续当前示例的 tensor 计算。
+    total_loss = 0.0  # 更新当前统计量或数据分片。
+    total_tokens = 0  # 更新当前统计量或数据分片。
+    for input_ids, target_ids in train_loader:  # 遍历当前 batch、时间步或数据集合。
+        optimizer.zero_grad(set_to_none=True)  # 更新或清理 optimizer 的状态。
         logits = lm(input_ids)              # [B, N, vocab_size]
-        loss = F.cross_entropy(
-            logits.reshape(-1, vocab_size),
-            target_ids.reshape(-1),
-        )
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item() * target_ids.numel()
-        total_tokens += target_ids.numel()
+        loss = F.cross_entropy(  # 执行当前张量计算并保存结果。
+            logits.reshape(-1, vocab_size),  # 继续当前示例的 tensor 计算。
+            target_ids.reshape(-1),  # 继续当前示例的 tensor 计算。
+        )  # 结束当前多行调用、容器或代码块。
+        loss.backward()  # 反向传播，计算所有可训练参数的 gradient。
+        optimizer.step()  # 更新或清理 optimizer 的状态。
+        total_loss += loss.item() * target_ids.numel()  # 更新当前统计量或数据分片。
+        total_tokens += target_ids.numel()  # 更新当前统计量或数据分片。
 
-    lm.eval()
-    with torch.no_grad():
-        input_ids, target_ids = next(iter(val_loader))
-        logits = lm(input_ids)
-        predictions = logits.argmax(dim=-1)
-        accuracy = (predictions == target_ids).float().mean()
-    print(epoch + 1, total_loss / total_tokens, accuracy.item())
+    lm.eval()  # 继续当前示例的 tensor 计算。
+    with torch.no_grad():  # 在这个上下文中执行临时的计算或资源管理。
+        input_ids, target_ids = next(iter(val_loader))  # 执行当前张量计算并保存结果。
+        logits = lm(input_ids)  # 执行当前张量计算并保存结果。
+        predictions = logits.argmax(dim=-1)  # 执行当前张量计算并保存结果。
+        accuracy = (predictions == target_ids).float().mean()  # 执行当前张量计算并保存结果。
+    print(epoch + 1, total_loss / total_tokens, accuracy.item())  # 打印结果，帮助观察值、shape 或 layout。
 ```
 
 这里的 shape 与 MLP/CNN 有一个本质差别：
@@ -2825,9 +2829,9 @@ flatten for CrossEntropy     [B*N, vocab_size] vs [B*N]
 训练完成后，给一个 prefix 逐步生成：
 
 ```python
-prefix = torch.tensor([[3, 4, 5]])
-with torch.no_grad():
-    next_token = lm(prefix)[:, -1].argmax(dim=-1)
+prefix = torch.tensor([[3, 4, 5]])  # 创建一个可读的示例 tensor。
+with torch.no_grad():  # 在这个上下文中执行临时的计算或资源管理。
+    next_token = lm(prefix)[:, -1].argmax(dim=-1)  # 执行当前张量计算并保存结果。
 print(next_token)   # 这个合成任务中应接近 tensor([6])
 ```
 
@@ -2959,6 +2963,195 @@ GNN:              graph edges / gather–message–scatter
 
 ---
 
+## 12.1 `view`、`reshape`、`transpose` 与显存：形状、步长和存储
+
+这一节回答一个经常让人“代码能跑、脑子没跟上”的问题：**改变 tensor 的 `shape`，到底是在改数据，还是只是在换一副看数据的眼镜？**
+
+先把四个概念拆开：
+
+- `storage`：真正存放数字的一段内存；
+- `shape`：每条轴有多少个位置；
+- `stride`：沿某条轴移动一个位置时，底层内存要跳过多少个元素；
+- `device`：这段 storage 在 CPU memory 还是 GPU memory。
+
+因此，一个 tensor 可以先看成下面这张“账本”：
+
+```mermaid
+flowchart LR
+    S["Storage: 1-D memory"] --> M["Metadata: shape + stride + offset"]
+    M --> V["view: same storage"]
+    M --> R["reshape: view if possible, copy otherwise"]
+    M --> T["transpose / permute: reorder axes"]
+    D["device: CPU or GPU"] --> S
+```
+
+图里最重要的箭头是：`view`、`reshape`、`transpose` 先处理 metadata；只有在 layout 不允许继续共享 storage 时，PyTorch 才需要创建一份 copy。`device` 则决定这段 storage 属于哪一块显存或内存。
+
+### 12.1.1 一个 tensor 不只有数字：`shape`、`stride`、`device`
+
+```python
+import torch  # 导入 PyTorch，提供 tensor 与 layout 查询 API。
+
+x = torch.arange(12, dtype=torch.float32).reshape(3, 4)  # 创建 12 个连续元素，并暂时排成 [3, 4]。
+print(x)  # 打印逻辑上的二维数值表。
+print(x.shape)  # 查看每条轴的长度，结果是 torch.Size([3, 4])。
+print(x.stride())  # 查看沿每条轴移动一步要跨过多少个元素，连续 [3, 4] 通常是 (4, 1)。
+print(x.storage_offset())  # 查看第一个逻辑元素在底层 storage 中的偏移量。
+print(x.dtype)  # 查看每个元素的数值类型，例如 float32。
+print(x.device)  # 查看 storage 所在设备，CPU 示例通常显示 cpu。
+print(x.is_contiguous())  # 检查当前 layout 是否符合默认 contiguous 顺序。
+```
+
+对 `[3, 4]` 的 contiguous tensor，`stride=(4,1)` 的读法是：沿第 0 轴前进一格，要跳过一整行的 4 个元素；沿第 1 轴前进一格，只需跳过 1 个元素。它可以用下面的地址公式理解：
+
+$$
+\mathrm{offset}(i_0,i_1)=\mathrm{storage\_offset}+i_0\,\mathrm{stride}_0+i_1\,\mathrm{stride}_1.
+$$
+
+这里 `offset` 是底层元素位置，`storage_offset` 是起点偏移，`i_0,i_1` 是索引，`stride_0,stride_1` 是两条轴的步长；它们的单位都是“元素”，不是 byte。
+
+### 12.1.2 `view`：只换 shape，共享同一份 storage
+
+`view` 的核心承诺是：**不搬数字，只换解释方式**。所以它要求原 tensor 的 stride 能支持目标 shape；如果 layout 不兼容，`view` 会直接报错，而不是偷偷复制。
+
+```python
+x = torch.arange(6, dtype=torch.float32)  # 创建一段连续的一维 storage。
+y = x.view(2, 3)  # 只改变 shape，不分配新的数字 storage。
+print(x.data_ptr() == y.data_ptr())  # True：两个 tensor 从同一个首地址读取数据。
+print(y._base is not None)  # True：y 是从另一个 tensor 派生出的 view。
+
+y[0, 0] = 99.0  # 通过 view 修改共享 storage 中的第一个元素。
+print(x[0])  # 99：原 tensor 也能看到这次修改。
+```
+
+这就是 aliasing（别名）：`x` 和 `y` 是两张 shape 不同的“地图”，但地图指向同一块地。要注意，`view` 不会复制数据并不等于它永远安全；对参与 autograd 的 tensor 做不恰当的 in-place 修改，可能破坏 backward 所需的中间值。
+
+### 12.1.3 `reshape`：优先尝试 view，必要时自动 copy
+
+`reshape` 的目标是“给我这个 shape”。它会在 layout 允许时返回 view；如果不能共享 storage，就创建一个新的 contiguous copy。因此，`reshape` 更方便，但它没有 `view` 那么强的“绝不复制”承诺。
+
+```python
+x = torch.arange(6, dtype=torch.float32)  # 创建连续的一维 tensor。
+y = x.reshape(2, 3)  # 当前 layout 兼容，所以这一步通常仍然是 view。
+print(y.data_ptr() == x.data_ptr())  # True：这里没有发生数据复制。
+
+z = y.transpose(0, 1)  # 交换两条轴，只改 metadata，通常得到 non-contiguous view。
+r = z.reshape(-1)  # 为了得到一维结果，reshape 可能创建新的 contiguous copy。
+print(z.is_contiguous())  # False：转置后的 stride 通常不再是默认连续顺序。
+print(r.is_contiguous())  # True：reshape 的结果通常可按一维连续读取。
+print(r.data_ptr() == z.data_ptr())  # 通常是 False：这里展示 reshape 可能已经复制。
+```
+
+所以不要用“`reshape` 一定不复制”或“`reshape` 一定复制”这种口号。若程序依赖 aliasing，请用 `data_ptr()`、`_base` 和 `is_contiguous()` 检查，而不是猜。
+
+### 12.1.4 `transpose` / `permute`：交换轴，通常只改 stride
+
+`transpose(dim0, dim1)` 交换两条轴；`permute(...)` 可以一次重新排列所有轴。它们通常返回共享 storage 的 non-contiguous view，底层数字顺序没有被重写。
+
+```python
+x = torch.arange(6, dtype=torch.float32).reshape(2, 3)  # 创建一个 [2, 3] 的 contiguous tensor。
+t = x.transpose(0, 1)  # 把第 0 轴和第 1 轴交换，得到逻辑 shape [3, 2]。
+p = x.permute(1, 0)  # 用完整轴顺序表达同一个 [3, 2] 的重排。
+print(t.shape, p.shape)  # 两个结果都为 torch.Size([3, 2])。
+print(t.stride(), p.stride())  # 两个结果通常都为 (1, 3)，说明读取步长被交换。
+print(t.data_ptr() == x.data_ptr())  # True：转置通常不复制底层 storage。
+print(t.is_contiguous())  # False：逻辑轴顺序与默认连续顺序不一致。
+```
+
+在二维 tensor 上，`x.T` 可以表达转置；在高阶 tensor 上更建议明确写 `x.transpose(-2, -1)` 或 `x.permute(...)`，因为你需要清楚指定哪两条轴交换。矩阵乘法里的 attention 例子正是：
+
+```python
+q = torch.randn(2, 4, 8, 16)  # 创建 [B, H, N, Dh] 的 query tensor。
+k = torch.randn(2, 4, 8, 16)  # 创建 [B, H, N, Dh] 的 key tensor。
+k_t = k.transpose(-2, -1)  # 只交换最后两轴，得到 [B, H, Dh, N]。
+scores = q @ k_t  # 沿 Dh 收缩，输出 [B, H, N, N]。
+```
+
+### 12.1.5 `contiguous`：需要连续 layout 时显式付出 copy 成本
+
+很多 kernel 或 `view` 需要 contiguous layout。此时可以调用 `contiguous()`：如果 tensor 已经连续，它通常直接返回自身；如果不连续，它会分配新 storage 并复制元素。
+
+```python
+x = torch.arange(6, dtype=torch.float32).reshape(2, 3)  # 创建 [2, 3] 的连续 tensor。
+t = x.transpose(0, 1)  # 得到共享 storage 的 [3, 2] non-contiguous view。
+t_contiguous = t.contiguous()  # 必要时复制成新的 contiguous storage。
+print(t_contiguous.is_contiguous())  # True：新结果可以按默认顺序连续读取。
+print(t_contiguous.data_ptr() == t.data_ptr())  # False：这里确实有新的 storage。
+flat = t_contiguous.view(-1)  # 连续 layout 允许安全地 view 成一维。
+print(flat.shape)  # torch.Size([6])：元素数量没有改变。
+```
+
+`contiguous()` 是一个明确的性能边界：它可能带来额外 memory traffic 和显存占用。不要为了“看起来整齐”对每个 tensor 无条件调用；先确认下游 API 是否真的需要 contiguous。
+
+### 12.1.6 shape 不变，显存也可能变：`dtype`、`device` 和 `numel`
+
+对一个 tensor，元素数量和每个元素的字节数决定了数据本体的大小：
+
+$$
+N=\prod_{i=0}^{r-1}S_i,
+\qquad
+M_{\mathrm{bytes}}=N\times \mathrm{element\_size}.
+$$
+
+| 符号 | 含义 | 单位 |
+|---|---|---|
+| $r$ | tensor 的 rank | 无量纲 |
+| $S_i$ | 第 $i$ 条轴的长度 | 个元素 |
+| $N$ | `numel()`，元素总数 | 个元素 |
+| `element_size` | 一个元素占用的 byte 数 | byte/元素 |
+| $M_{\mathrm{bytes}}$ | 仅数据本体的理论大小 | byte |
+
+`shape` 只决定 $N$，`dtype` 决定 `element_size`，`device` 决定这些 byte 放在 CPU memory 还是 GPU memory。下面的例子不要求 CUDA，也能先把公式跑通：
+
+```python
+import torch  # 导入 PyTorch，用于创建不同 dtype 的 tensor。
+
+for dtype in (torch.float32, torch.float16, torch.int64):  # 比较常见 dtype 的单元素大小。
+    x = torch.zeros(1024, 1024, dtype=dtype)  # 创建相同 shape、不同 dtype 的 tensor。
+    theoretical = x.numel() * x.element_size()  # 按元素数量乘单元素 byte 数计算理论数据大小。
+    print(dtype, x.numel(), x.element_size(), x.nbytes, theoretical)  # 对照 PyTorch 的 nbytes 与公式结果。
+```
+
+例如 `[1024,1024]` 有 $1{,}048{,}576$ 个元素；`float32` 每个元素 4 byte，所以数据本体约为 $4$ MiB，`float16` 约为 $2$ MiB，`int64` 约为 $8$ MiB。实际训练占用通常还要加上 gradient、optimizer state、temporary workspace 和 activation 保存。
+
+如果机器有 CUDA，可以额外观察 allocator 的统计量：
+
+```python
+if torch.cuda.is_available():  # 只有 CUDA 可用时才读取 GPU allocator 统计量。
+    torch.cuda.reset_peak_memory_stats()  # 清零本段示例的 peak memory 计数。
+    device = torch.device("cuda")  # 选择当前可见的 GPU device。
+    x_gpu = torch.empty(1024, 1024, dtype=torch.float16, device=device)  # 直接在 GPU memory 分配 tensor。
+    print(x_gpu.device)  # 确认 tensor 确实位于 cuda device。
+    print(torch.cuda.memory_allocated(device))  # 查看仍被 live tensor 使用的显存。
+    print(torch.cuda.memory_reserved(device))  # 查看 caching allocator 向 CUDA 申请并保留的显存。
+    print(torch.cuda.max_memory_allocated(device))  # 查看本段代码以来的 live allocation 峰值。
+else:  # CPU-only 环境没有 CUDA allocator 可供查询。
+    print("CUDA is unavailable; the previous CPU examples still apply.")  # 给出可运行的降级提示。
+```
+
+`memory_allocated` 更接近“当前 tensor 真正在用多少”，`memory_reserved` 还包含 PyTorch caching allocator 暂存的块；释放 tensor 后，reserved 不一定立刻归零。`torch.cuda.empty_cache()` 只能释放未使用的缓存块，不能让仍被 Python 引用的 tensor 凭空消失。
+
+### 12.1.7 一套不容易翻车的诊断顺序
+
+当一个 `view` 报错、显存突然上升，或输出 shape 看起来对但数值不对时，可以按下面顺序排查：
+
+```python
+x = torch.randn(2, 3, 4)  # 先构造一个带 batch、row、feature 三条轴的 tensor。
+print("shape:", x.shape)  # 第一步：确认逻辑 shape。
+print("stride:", x.stride())  # 第二步：确认每条轴的底层跳步。
+print("device:", x.device)  # 第三步：确认数据在哪个 memory space。
+print("dtype:", x.dtype)  # 第四步：确认单元素占多少 byte。
+print("numel:", x.numel())  # 第五步：确认元素总数。
+print("bytes:", x.nbytes)  # 第六步：估算数据本体占用的 byte 数。
+
+x_t = x.transpose(1, 2)  # 制造一个轴顺序改变的 view。
+print("transposed:", x_t.shape, x_t.stride(), x_t.is_contiguous())  # 一次观察 shape、stride 与 contiguous 状态。
+x_safe = x_t.contiguous()  # 只有下游要求连续 layout 时才显式复制。
+print("safe:", x_safe.shape, x_safe.stride(), x_safe.is_contiguous())  # 验证复制后的 layout。
+```
+
+可以把这套顺序压缩成一句话：**先看 shape 确认“你想表达什么”，再看 stride 确认“底层怎样走”，最后看 device、dtype 和 bytes 确认“代价在哪里”。** `view`、`reshape`、`transpose` 并不是三个互相替代的“改形状按钮”：它们分别对应共享 storage 的重新解释、尽量复用的重排，以及轴顺序与 stride 的改变。
+
 ## 13. 迁移练习（含答案）
 
 ### 练习 1：预测输出 shape
@@ -2966,9 +3159,9 @@ GNN:              graph edges / gather–message–scatter
 已知
 
 ```python
-x = torch.randn(7, 20)
-layer = nn.Linear(20, 5)
-y = layer(x)
+x = torch.randn(7, 20)  # 构造输入或监督信号 tensor。
+layer = nn.Linear(20, 5)  # 创建 neural network layer 或 module。
+y = layer(x)  # 保存当前层或矩阵乘法的输出 tensor。
 ```
 
 `y` 的 shape 是什么？
@@ -2978,17 +3171,17 @@ y = layer(x)
 ### 练习 2：判断哪一行是矩阵乘法
 
 ```python
-a = torch.randn(4, 3)
-b = torch.randn(4, 3)
-c = torch.randn(3, 6)
+a = torch.randn(4, 3)  # 创建用于演示的 tensor。
+b = torch.randn(4, 3)  # 构造参数 tensor，并保持注释中的 shape 约定。
+c = torch.randn(3, 6)  # 创建用于演示的 tensor。
 ```
 
 哪些表达式成立，结果 shape 是什么？
 
 ```python
-a * b
-a @ c
-a @ b
+a * b  # 继续当前示例的 tensor 计算。
+a @ c  # 继续当前示例的 tensor 计算。
+a @ b  # 继续当前示例的 tensor 计算。
 ```
 
 **答案：** `a * b` 成立，逐元素结果是 `[4,3]`；`a @ c` 成立，结果是 `[4,6]`；`a @ b` 不成立，因为 `[4,3] @ [4,3]` 的内维 `3` 与 `4` 不相等。若想乘 `b` 的转置，应写 `a @ b.T`，结果是 `[4,4]`，它计算每一对 row 的 dot product。
@@ -2996,9 +3189,9 @@ a @ b
 ### 练习 3：attention shape
 
 ```python
-q = torch.randn(2, 8, 16, 32)
-k = torch.randn(2, 8, 16, 32)
-scores = q @ k.transpose(-2, -1)
+q = torch.randn(2, 8, 16, 32)  # 创建 query tensor，最后一维是 feature width。
+k = torch.randn(2, 8, 16, 32)  # 创建 key tensor，最后一维是 feature width。
+scores = q @ k.transpose(-2, -1)  # 计算 query 与 key 的 dot product 得分。
 ```
 
 `scores` 的 shape 是什么？`16` 和 `32` 分别代表什么？
@@ -3008,9 +3201,9 @@ scores = q @ k.transpose(-2, -1)
 ### 练习 4：故意制造一个错误
 
 ```python
-layer = nn.Linear(10, 4)
-x = torch.randn(3, 8)
-y = layer(x)
+layer = nn.Linear(10, 4)  # 创建 neural network layer 或 module。
+x = torch.randn(3, 8)  # 构造输入或监督信号 tensor。
+y = layer(x)  # 保存当前层或矩阵乘法的输出 tensor。
 ```
 
 为什么报错？不要通过 reshape 修复，先说出真实问题。
@@ -3153,17 +3346,17 @@ W 的第一行只负责 $y_0$，第二行只负责 $y_1$。这已经暴露了 Py
 用 PyTorch 验证：
 
 ```python
-import torch
-from torch import nn
+import torch  # 导入所需的 Python 模块。
+from torch import nn  # 导入所需的 PyTorch API。
 
 x = torch.tensor([[1.0, 2.0, 3.0]])  # [B, D_in] = [1, 3]
-W = torch.tensor([
+W = torch.tensor([  # 构造参数 tensor，并保持注释中的 shape 约定。
     [10.0, 20.0, 30.0],               # output neuron 0
     [40.0, 50.0, 60.0],               # output neuron 1
 ])                                   # [D_out, D_in] = [2, 3]
 b = torch.tensor([100.0, 200.0])     # [D_out] = [2]
 
-y = x @ W.T + b
+y = x @ W.T + b  # 保存当前层或矩阵乘法的输出 tensor。
 print(y)                             # tensor([[240., 520.]])
 ```
 
@@ -3293,9 +3486,9 @@ $$
 x_col = torch.tensor([[1.0], [2.0], [3.0]])  # [D_in, 1]
 x_row = x_col.T                             # [1, D_in]
 
-W = torch.tensor([
-    [10.0, 20.0, 30.0],
-    [40.0, 50.0, 60.0],
+W = torch.tensor([  # 构造参数 tensor，并保持注释中的 shape 约定。
+    [10.0, 20.0, 30.0],  # 继续当前示例的 tensor 计算。
+    [40.0, 50.0, 60.0],  # 继续当前示例的 tensor 计算。
 ])                                           # [D_out, D_in]
 
 y_col = W @ x_col                           # [D_out, 1]
@@ -3371,16 +3564,16 @@ $$
 这也是最贴近 MLP 的视角。每一行都可以单独拿出来做一个 neuron：
 
 ```python
-x = torch.tensor([1.0, 2.0, 3.0])
-W = torch.tensor([
-    [10.0, 20.0, 30.0],
-    [40.0, 50.0, 60.0],
-])
-b = torch.tensor([100.0, 200.0])
+x = torch.tensor([1.0, 2.0, 3.0])  # 构造输入或监督信号 tensor。
+W = torch.tensor([  # 构造参数 tensor，并保持注释中的 shape 约定。
+    [10.0, 20.0, 30.0],  # 继续当前示例的 tensor 计算。
+    [40.0, 50.0, 60.0],  # 继续当前示例的 tensor 计算。
+])  # 继续当前示例的 tensor 计算。
+b = torch.tensor([100.0, 200.0])  # 构造参数 tensor，并保持注释中的 shape 约定。
 
-y0 = W[0] @ x + b[0]
-y1 = W[1] @ x + b[1]
-y = W @ x + b
+y0 = W[0] @ x + b[0]  # 执行当前张量计算并保存结果。
+y1 = W[1] @ x + b[1]  # 执行当前张量计算并保存结果。
+y = W @ x + b  # 保存当前层或矩阵乘法的输出 tensor。
 
 print(y0, y1)            # tensor(240.) tensor(520.)
 print(torch.stack([y0, y1]).equal(y))  # True
@@ -3532,14 +3725,14 @@ $$
 
 ```python
 x = torch.tensor([[2.0, 1.0]])      # [B, D_in] = [1, 2]
-W = torch.tensor([
+W = torch.tensor([  # 构造参数 tensor，并保持注释中的 shape 约定。
     [1.0, 0.0],                     # class 0 detector
     [0.0, 2.0],                     # class 1 detector
 ])                                  # [2, 2]
-b = torch.zeros(2)
+b = torch.zeros(2)  # 构造参数 tensor，并保持注释中的 shape 约定。
 
 logits = x @ W.T + b                # [1, 2] = [[2, 2]]
-prob = torch.softmax(logits, dim=-1)
+prob = torch.softmax(logits, dim=-1)  # 调用 PyTorch 运算得到新的 tensor 或统计量。
 ```
 
 这里两个 class detector 对输入的 response 一样，所以概率相同。训练会调整 W 的行和 bias，使正确类别的 row 对目标输入产生更大的 logit。
@@ -3578,8 +3771,8 @@ PyTorch 的输入还可以有多个 leading dimensions。比如 Transformer 中�
 
 ```python
 x = torch.randn(2, 8, 32)          # [B, N, D_in]
-layer = nn.Linear(32, 64)
-y = layer(x)
+layer = nn.Linear(32, 64)  # 创建 neural network layer 或 module。
+y = layer(x)  # 保存当前层或矩阵乘法的输出 tensor。
 print(layer.weight.shape)          # [64, 32]
 print(y.shape)                     # [2, 8, 64]
 ```
@@ -3598,7 +3791,7 @@ $$
 调用
 
 ```python
-layer = nn.Linear(in_features=3, out_features=2)
+layer = nn.Linear(in_features=3, out_features=2)  # 创建 neural network layer 或 module。
 ```
 
 实际上声明了四件事：
@@ -3611,9 +3804,9 @@ layer = nn.Linear(in_features=3, out_features=2)
 因此 [D_out,D_in] 不是一个只影响内部实现的细节，它参与了 module 的输入输出契约。若写成：
 
 ```python
-layer = nn.Linear(3, 2)
-x = torch.randn(5, 4)
-y = layer(x)
+layer = nn.Linear(3, 2)  # 创建 neural network layer 或 module。
+x = torch.randn(5, 4)  # 构造输入或监督信号 tensor。
+y = layer(x)  # 保存当前层或矩阵乘法的输出 tensor。
 ```
 
 错误不是“矩阵乘法 API 不聪明”，而是 x 的最后一维 4 和 layer 宣布的 input feature 数 3 不一致。正确修复是确认上游表示的真实语义，然后改变 layer 的 in_features 或上游投影；不要随手 reshape 让数字凑数。
@@ -3621,14 +3814,14 @@ y = layer(x)
 如果手动实现 alternative convention：
 
 ```python
-class RowLinear(nn.Module):
-    def __init__(self, d_in, d_out):
-        super().__init__()
-        self.weight = nn.Parameter(torch.randn(d_in, d_out))
-        self.bias = nn.Parameter(torch.zeros(d_out))
+class RowLinear(nn.Module):  # 定义一个可复用的 neural network module。
+    def __init__(self, d_in, d_out):  # 定义一个封装当前计算流程的函数。
+        super().__init__()  # 初始化父类 nn.Module 的状态。
+        self.weight = nn.Parameter(torch.randn(d_in, d_out))  # 保存 module 的子层或可训练参数。
+        self.bias = nn.Parameter(torch.zeros(d_out))  # 保存 module 的子层或可训练参数。
 
-    def forward(self, x):
-        return x @ self.weight + self.bias
+    def forward(self, x):  # 定义一个封装当前计算流程的函数。
+        return x @ self.weight + self.bias  # 返回当前函数的计算结果。
 ```
 
 这也能工作，但它与 nn.Linear 的参数 shape 不同。加载 checkpoint、复制权重、写初始化和比较梯度时，必须明确两者是否互为转置。
@@ -3730,13 +3923,13 @@ $$
 PyTorch 里的小验证：
 
 ```python
-x = torch.tensor([[1.0, 2.0, 3.0],
-                  [4.0, 5.0, 6.0]], requires_grad=True)
-layer = nn.Linear(3, 2, bias=True)
+x = torch.tensor([[1.0, 2.0, 3.0],  # 构造输入或监督信号 tensor。
+                  [4.0, 5.0, 6.0]], requires_grad=True)  # 执行当前张量计算并保存结果。
+layer = nn.Linear(3, 2, bias=True)  # 创建 neural network layer 或 module。
 
-y = layer(x)
-loss = y.sum()
-loss.backward()
+y = layer(x)  # 保存当前层或矩阵乘法的输出 tensor。
+loss = y.sum()  # 执行当前张量计算并保存结果。
+loss.backward()  # 反向传播，计算所有可训练参数的 gradient。
 
 print(layer.weight.grad.shape)  # [2, 3]
 print(layer.bias.grad.shape)    # [2]
@@ -3832,8 +4025,8 @@ output X @ W.T:     [B, D_out]
 F.linear 的 weight 参数遵循 nn.Linear convention：
 
 ```python
-x = torch.randn(4, 3)
-wrong_weight = torch.randn(3, 2)
+x = torch.randn(4, 3)  # 构造输入或监督信号 tensor。
+wrong_weight = torch.randn(3, 2)  # 创建用于演示的 tensor。
 
 # F.linear(x, wrong_weight) 会把 wrong_weight 当成 [D_out, D_in]
 # 因此它期待 x 的最后一维是 2，而实际 x 的最后一维是 3。
@@ -3842,7 +4035,7 @@ wrong_weight = torch.randn(3, 2)
 如果你的参数确实采用 alternative convention，就显式写：
 
 ```python
-y = x @ wrong_weight
+y = x @ wrong_weight  # 保存当前层或矩阵乘法的输出 tensor。
 # [4, 3] @ [3, 2] -> [4, 2]
 ```
 
@@ -3851,7 +4044,7 @@ y = x @ wrong_weight
 对二维 W，W.T 很清楚。但如果 input 是 [B,N,D]，不要用 input.T 代替“最后两轴转置”；高阶 tensor 的 .T 会反转所有轴，通常不是你想要的。attention 中应该写：
 
 ```python
-k_transposed = k.transpose(-2, -1)
+k_transposed = k.transpose(-2, -1)  # 改变 shape 或轴顺序，并保留对应的 layout 语义。
 ```
 
 这里仅交换 [N,D]，保留前面的 batch/head axes。
