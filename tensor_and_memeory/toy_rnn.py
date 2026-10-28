@@ -48,7 +48,7 @@ class ToyRNN(nn.Module):
 
     def _print_meta_(self):
         print(
-            f"self.n_layer:{self.n_layer}, self.d_model:{self.d_model}, self.input_size:{self.input_size}"
+            f"self.n_layer:{self.n_layer}, self.d_model:{self.d_model}, self.embedding_size:{self.embedding_size}"
         )
 
     def forward(self, x):
@@ -58,9 +58,9 @@ class ToyRNN(nn.Module):
         layer_out = embed
         h_out = []
         for layer in self.layer_list:
-            h = torch.zeros(size=(B, self.d_model))
+            h = layer_out.new_zeros(size=(B, self.d_model))
             outs = []
-            for seq_i in S:
+            for seq_i in range(S):
                 h = layer.forward(layer_out[:, seq_i], h)
                 outs.append(h)
             h_out.append(h)  # [batch, d_model], only the last h of an RNNCell
@@ -76,6 +76,7 @@ from torch.utils.data import DataLoader
 from data.tiny_shakespeare.dataset import CharLanguageModelDataset
 import json
 from pathlib import Path
+import torch.nn.functional as F
 
 meta_path = Path(__file__).resolve().parent / "data/tiny_shakespeare/metadata.json"
 
@@ -85,7 +86,7 @@ class Config:
     epoch: int = 1000
     batch_size: int = 100
     seq_len: int = 16
-    cosine_anneal_T_0: int = epoch / batch_size
+    cosine_anneal_T_0: int = 10
     device = "cuda" if torch.cuda.is_available() else "cpu"
     itos: list[str] = []
 
@@ -139,8 +140,6 @@ def train(rnn: ToyRNN = None):
         optimizer, T_0=Config.cosine_anneal_T_0
     )
 
-    loss_fn = torch.nn.functional.cross_entropy()
-
     # data set
     dataset = CharLanguageModelDataset(split="train", seq_len=Config.seq_len)
     dataloader = DataLoader(dataset, batch_size=Config.batch_size, shuffle=True)
@@ -154,11 +153,11 @@ def train(rnn: ToyRNN = None):
             x, y_label = x.to(Config.device), y.to(Config.device)
             y_predict, h = toy_rnn.forward(x)
 
-            loss = loss_fn(y_predict.transpose(1, 2), y_label)
+            loss = F.cross_entropy(y_predict.transpose(1, 2), y_label)
             loss.backward()
             optimizer.step()
-            scheduler.step()
             optimizer.zero_grad()
+        scheduler.step()
 
 
 def eval(rnn: ToyRNN = None):
@@ -184,5 +183,6 @@ if __name__ == "__main__":
 
     if args.run_mode == "train":
         print(f"run in {args.run_mode} mode")
+        train()
     else:
         print(f"run in {args.run_mode} mode")
