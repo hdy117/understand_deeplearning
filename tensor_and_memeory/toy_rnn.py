@@ -16,8 +16,8 @@ class RNNCell(nn.Module):
         # out:[batch, d_model_out]
         memory = self.memory_fn(h)
         new_info = self.current_fn(x)
-        cur_activate = torch.tanh(memory + new_info)
-        return cur_activate
+        h = torch.tanh(memory + new_info)
+        return h
 
 
 class ToyRNN(nn.Module):
@@ -58,8 +58,8 @@ class ToyRNN(nn.Module):
         layer_out = embed
         h_out = []
         for layer in self.layer_list:
-            h = layer_out.new_zeros(size=(B, self.d_model))
             outs = []
+            h = torch.zeros(size=(B, self.d_model)).to(Config.device)
             for seq_i in range(S):
                 h = layer.forward(layer_out[:, seq_i], h)
                 outs.append(h)
@@ -91,7 +91,7 @@ class Config:
     itos: list[str] = []
 
     @classmethod
-    def get_itos_dict(cls) -> dict:
+    def get_itos_list(cls) -> list[str]:
         json_dict = json.loads(meta_path.read_text(encoding="utf-8"))
         print(f"json_dict:{json_dict}")
         assert "itos" in json_dict.keys()
@@ -105,7 +105,7 @@ class Config:
         return out_str
 
 
-Config.itos = Config.get_itos_dict()
+Config.itos = Config.get_itos_list()
 
 
 def dataset_test():
@@ -124,12 +124,8 @@ def dataset_test():
 
 
 def train(rnn: ToyRNN = None):
-    toy_rnn: ToyRNN = ToyRNN(
-        n_layer=4, embedding_size=8, d_model=128, output_size=len(Config.itos)
-    ).to(Config.device)
-
     optimizer = torch.optim.AdamW(
-        toy_rnn.parameters(),
+        rnn.parameters(),
         lr=Config.lr,
         betas=(0.9, 0.999),
         eps=1e-8,
@@ -151,13 +147,14 @@ def train(rnn: ToyRNN = None):
     for epoch_i in range(Config.epoch):
         for index, (x, y) in enumerate(dataloader):
             x, y_label = x.to(Config.device), y.to(Config.device)
-            y_predict, h = toy_rnn.forward(x)
+            y_predict, h = rnn.forward(x)
 
             loss = F.cross_entropy(y_predict.transpose(1, 2), y_label)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
         scheduler.step()
+        print(f"epoch_i:{epoch_i}, epoch:{Config.epoch}")
 
 
 def eval(rnn: ToyRNN = None):
@@ -176,13 +173,15 @@ def set_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args: argparse.Namespace = set_args()
 
-    rnn: ToyRNN = ToyRNN(n_layer=3, d_model=64)
-    rnn._print_meta_()
-
     dataset_test()
+
+    toy_rnn: ToyRNN = ToyRNN(
+        n_layer=3, embedding_size=14, d_model=64, output_size=len(Config.itos)
+    ).to(Config.device)
+    toy_rnn._print_meta_()
 
     if args.run_mode == "train":
         print(f"run in {args.run_mode} mode")
-        train()
+        train(toy_rnn)
     else:
         print(f"run in {args.run_mode} mode")
