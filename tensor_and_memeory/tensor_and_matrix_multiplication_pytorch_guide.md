@@ -1142,6 +1142,52 @@ scores = torch.einsum("bhid,bhjd->bhij", q, k)  # 计算 query 与 key 的 dot p
 
 公式中的 `d` 在两边都出现，所以沿 `d` 求和；`i` 与 `j` 保留下来，形成 query-key 的二维表；`b` 与 `h` 也保留，表示 batch 与 head。它和 `q @ k.transpose(-2, -1)` 表达的是同一类计算，但 `einsum` 把“哪些轴对齐、哪些轴消失”写得更显式。
 
+#### 先看核心原理：用 q @ K.T 一次说透
+
+einsum 的全部原理只有一句话：**给每条轴起一个名字；同名的轴先对齐再相乘；箭头右侧没点到名的轴，沿它求和后消失。**对比来看，矩阵乘法是“位置驱动”的约定——永远只看最后两条轴；einsum 是“名字驱动”的声明——每条轴扮演什么角色，直接写在 equation 里。
+
+用 attention 的第一步把两种写法并排：
+
+```python
+scores = q @ k.transpose(-2, -1)                # 位置驱动
+scores = torch.einsum("bhid,bhjd->bhij", q, k)  # 名字驱动，与上一行完全等价
+```
+
+matmul 版本要做三件事：先想起“最后两条轴才是矩阵轴”这条约定，再把 k 的最后两轴转置成 [Dh, N]，最后检查内维 Dh 对齐。整个推理发生在你脑子里，代码里看不出 Dh 被收缩。einsum 版本则把同一件事写成五个字母各自的命运：
+
+| 字母 | 绑定的轴 | 出现在 | 命运 | 语义 |
+|------|----------|--------|------|------|
+| b | 第 0 轴 | 两个输入 + 输出 | 对齐并保留 | batch 并行，不混算 |
+| h | 第 1 轴 | 两个输入 + 输出 | 对齐并保留 | head 并行，不混算 |
+| i | q 的第 2 轴 | 只在 q 和输出 | 保留 | query position |
+| j | k 的第 2 轴 | 只在 k 和输出 | 保留 | key position |
+| d | 第 3 轴 | 两个输入，不在输出 | 对齐、相乘、求和 | feature 轴被收缩 |
+
+逐元素写出来，就是那张熟悉的 score 表：
+
+$$
+\mathrm{scores}_{b,h,i,j}
+=
+\sum_{d=1}^{D_h}q_{b,h,i,d}\,k_{b,h,j,d}.
+$$
+
+所以读任何 equation 都用同三条规则：
+
+1. **起名**：一个字母绑定一条轴，字母数量必须等于 operand 的 rank。
+2. **对齐**：同名轴逐格配对相乘，size 必须兼容——相同，或一边为 1 可 broadcast。
+3. **消元**：箭头右侧出现的字母按顺序留在输出；没出现的字母沿它求和后消失。
+
+这套写法的渊源是 Einstein summation convention：1916 年广义相对论里“同一项中重复出现的指标默认求和”的约定。einsum 把它放宽成显式声明——只在左右两边都出现、但右侧消失的指标才求和，输出轴的顺序也由你点名。
+
+attention 的第二步 A @ V，是同一原理换个字母消失：
+
+```python
+context = torch.einsum("bhij,bhjd->bhid", attention, v)
+# 第一步收缩 feature 轴 d 产生路由表；第二步收缩 source token 轴 j 混合内容
+```
+
+两次都是同一套规则，只是被消元的字母不同。这就是“名字驱动”比“位置驱动”透明的地方：不用记最后两轴是谁，equation 里写着谁消失。当然，rank-2 的 `X @ W.T` 已经足够清楚，不必换 einsum；一旦轴超过三条、或有好几条 batch-like 轴，equation 更能防止“转置错轴”这类静默错误。
+
 ---
 
 #### 7.3.1 einsum equation 的基本语法

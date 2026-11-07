@@ -83,7 +83,7 @@ meta_path = Path(__file__).resolve().parent / "data/tiny_shakespeare/metadata.js
 
 class Config:
     lr: float = 1e-3
-    epoch: int = 1000
+    epoch: int = 10
     batch_size: int = 100
     seq_len: int = 16
     cosine_anneal_T_0: int = 10
@@ -138,7 +138,9 @@ def train(rnn: ToyRNN = None):
 
     # data set
     dataset = CharLanguageModelDataset(split="train", seq_len=Config.seq_len)
-    dataloader = DataLoader(dataset, batch_size=Config.batch_size, shuffle=True)
+    dataloader = DataLoader(
+        dataset, batch_size=Config.batch_size, shuffle=True, num_workers=4
+    )
     print(
         f"seq_len:{Config.seq_len}, batch_size:{Config.batch_size}, device:{Config.device}"
     )

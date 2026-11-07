@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>矩阵乘法的六副眼镜 · Six Lenses on Matrix Multiplication</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#f9f4ed;
+  --paper-2:#f3ecdf;
+  --panel:#fffdf8;
+  --line:#e3d9c6;
+  --ink:#1c1a16;
+  --ink-2:#5c564a;
+  --row:#e8890c;   /* orange = rows of A */
+  --row-soft:#ffe7c2;
+  --col:#2f7fc4;   /* blue = cols of B */
+  --col-soft:#d8eafa;
+  --res:#d6336c;   /* pink = result C */
+  --res-soft:#fbd6e5;
+  --accent:#2052bb;
+  --mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+  --sans:'IBM Plex Sans','Noto Sans SC',-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+  --nav-h:52px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;scroll-padding-top:calc(var(--nav-h) + 16px)}
+body{font:17px/1.7 var(--sans);color:var(--ink);background:var(--paper);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+button{cursor:pointer;font-family:var(--sans)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+code,.mono{font-family:var(--mono)}
+::selection{background:var(--res-soft)}
+
+/* ---------- sticky top nav ---------- */
+nav.topnav{position:sticky;top:0;z-index:60;background:rgba(249,244,237,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.topnav-inner{max-width:1120px;margin:0 auto;height:var(--nav-h);display:flex;align-items:center;gap:18px;padding:0 20px;overflow-x:auto;scrollbar-width:none}
+.topnav-inner::-webkit-scrollbar{display:none}
+.topnav .brand{font-weight:700;white-space:nowrap;font-size:15px}
+.topnav .brand span{color:var(--res)}
+.topnav .links{display:flex;gap:4px;margin-left:auto}
+.topnav .links a{white-space:nowrap;font-size:14px;color:var(--ink-2);padding:6px 10px;border-radius:6px;text-decoration:none}
+.topnav .links a:hover{background:var(--paper-2);color:var(--ink)}
+.topnav .links a b{font-family:var(--mono);font-weight:600;margin-right:4px}
+
+/* ---------- hero ---------- */
+.hero{max-width:1120px;margin:0 auto;padding:9vh 20px 6vh;position:relative}
+.hero .kicker{font-family:var(--mono);font-size:13px;letter-spacing:.14em;color:var(--ink-2);text-transform:uppercase;margin-bottom:3vh}
+.hero h1{font-weight:900;line-height:1.04;letter-spacing:-.01em;font-size:clamp(2.7rem,8.2vw,6.2rem)}
+.hero .ln1{display:block;padding-left:4vw}
+.hero .ln2{display:block;padding-left:19vw;color:var(--res)}
+.hero .ln3{display:block;padding-left:8vw;font-size:.42em;color:var(--ink-2);font-weight:500;letter-spacing:0;margin-top:1.2vh}
+.hero .chain{display:inline-flex;align-items:center;gap:.5em;margin-top:4.5vh;font-family:var(--mono);font-size:clamp(.95rem,2.4vw,1.35rem);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.7em 1.1em;box-shadow:4px 4px 0 var(--paper-2)}
+.hero .chain .merge{color:var(--res);font-weight:600}
+.hero .hint{margin-top:2vh;color:var(--ink-2);font-size:15px;max-width:56ch}
+
+/* ---------- layout ---------- */
+main{max-width:1120px;margin:0 auto;padding:0 20px 12vh}
+section.lens{margin-top:9vh}
+section.lens h2{position:sticky;top:var(--nav-h);z-index:50;background:var(--paper);padding:14px 0 10px;font-size:clamp(1.5rem,3.6vw,2.2rem);font-weight:900;display:flex;align-items:baseline;gap:.55em;border-bottom:2px solid var(--ink)}
+section.lens h2 .tag{font-family:var(--mono);font-size:.5em;font-weight:600;color:var(--paper);background:var(--ink);border-radius:6px;padding:.25em .55em;transform:translateY(-.35em)}
+.prose{max-width:68ch;margin-top:1.6em}
+.prose p{margin:.9em 0}
+.prose strong{font-weight:700}
+.formula{font-family:var(--mono);font-size:1.02em;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1em 1.2em;margin:1.2em 0;overflow-x:auto;white-space:nowrap}
+.formula .hl-r{color:var(--row);font-weight:600}
+.formula .hl-c{color:var(--col);font-weight:600}
+.formula .hl-p{color:var(--res);font-weight:600}
+.callout{border-left:3px solid var(--res);background:var(--panel);padding:.9em 1.2em;margin:1.2em 0;border-radius:0 10px 10px 0}
+.callout.tone-b{border-left-color:var(--accent)}
+
+/* ---------- demo breakouts ---------- */
+.demo{margin:2.2em 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:clamp(14px,3vw,28px);box-shadow:6px 6px 0 var(--paper-2)}
+.demo-title{font-family:var(--mono);font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:14px;color:var(--ink-2);margin-bottom:12px}
+.legend .chip{display:inline-flex;align-items:center;gap:6px}
+.legend .sw{width:14px;height:14px;border-radius:4px;display:inline-block;border:1px solid rgba(0,0,0,.18)}
+.sw-r{background:var(--row-soft);border-color:var(--row)}
+.sw-c{background:var(--col-soft);border-color:var(--col)}
+.sw-p{background:var(--res-soft);border-color:var(--res)}
+.matrow{display:flex;align-items:center;gap:clamp(8px,2vw,22px);flex-wrap:wrap;justify-content:center}
+.matbox{display:flex;flex-direction:column;align-items:center;gap:8px}
+.mat-label{font-family:var(--mono);font-weight:600;font-size:15px}
+.mat{display:grid;gap:4px}
+.cell{width:var(--cs,44px);height:var(--cs,44px);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:calc(var(--cs,44px)*.34);background:#fff;border:1.5px solid var(--line);border-radius:7px;transition:background .15s ease,transform .15s ease,border-color .15s ease,opacity .15s ease;color:var(--ink)}
+button.cell{padding:0}
+button.cell:hover{transform:scale(1.08)}
+.cell.hl-r{background:var(--row-soft);border-color:var(--row)}
+.cell.hl-c{background:var(--col-soft);border-color:var(--col)}
+.cell.hl-p{background:var(--res-soft);border-color:var(--res);font-weight:600}
+.cell.dim{opacity:.28}
+.cell.ghost{border-style:dashed;background:transparent;color:var(--ink-2)}
+.op{font-size:26px;font-weight:600;color:var(--ink-2);font-family:var(--mono)}
+.readout{margin-top:16px;background:var(--paper);border:1px dashed var(--line);border-radius:10px;padding:12px 16px;font-family:var(--mono);font-size:clamp(.8rem,2vw,.95rem);line-height:1.9;min-height:3.4em;overflow-x:auto;white-space:nowrap}
+.readout .t-r{color:var(--row);font-weight:600}
+.readout .t-c{color:var(--col);font-weight:600}
+.readout .t-p{color:var(--res);font-weight:600}
+.controls{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:16px}
+.btn{background:var(--ink);color:var(--paper);border:none;border-radius:8px;padding:10px 18px;font-size:15px;font-weight:600;transition:transform .15s ease,background .15s ease}
+.btn:hover{background:#000;transform:translateY(-1px)}
+.btn.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--ink)}
+.btn.ghost:hover{background:var(--paper-2)}
+.btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.slider-row{display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:14px;flex-wrap:wrap}
+input[type=range]{accent-color:var(--res);width:min(260px,60vw);height:32px;cursor:pointer}
+.slider-val{min-width:5.5em;font-weight:600}
+
+/* composition diagram */
+.flow{display:flex;align-items:center;justify-content:center;gap:clamp(6px,1.6vw,18px);flex-wrap:wrap;margin:8px 0}
+.space{background:#fff;border:2px solid var(--ink);border-radius:12px;padding:14px 18px;font-family:var(--mono);font-weight:600;text-align:center;min-width:96px}
+.space .vec{font-size:.8em;font-weight:400;color:var(--ink-2);margin-top:4px;white-space:nowrap}
+.farrow{display:flex;flex-direction:column;align-items:center;font-family:var(--mono);font-weight:600;color:var(--ink);position:relative}
+.farrow svg{display:block}
+.farrow .lbl{margin-bottom:2px}
+.farrow.direct .lbl{color:var(--res)}
+.flow-direct{border-top:2px dashed transparent;margin-top:6px}
+
+/* bracket bars */
+.bars{display:flex;flex-direction:column;gap:14px;margin-top:10px}
+.bar-row{display:grid;grid-template-columns:minmax(130px,170px) 1fr;gap:12px;align-items:center}
+.bar-label{font-family:var(--mono);font-size:14px;font-weight:600}
+.bar-track{background:var(--paper);border:1px solid var(--line);border-radius:8px;height:34px;position:relative;overflow:hidden}
+.bar-fill{height:100%;border-radius:7px 0 0 7px;transition:width .35s ease;display:flex;align-items:center}
+.bar-fill.f1{background:repeating-linear-gradient(45deg,var(--res),var(--res) 8px,#e0578d 8px,#e0578d 16px)}
+.bar-fill.f2{background:repeating-linear-gradient(45deg,var(--col),var(--col) 8px,#5fa1d6 8px,#5fa1d6 16px)}
+.bar-num{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink)}
+.verdict{margin-top:14px;font-weight:600;font-size:1.05em}
+.verdict .big{font-family:var(--mono);color:var(--res);font-size:1.3em}
+
+/* exercises */
+.exercise{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:clamp(14px,2.6vw,24px);margin:1.4em 0;box-shadow:5px 5px 0 var(--paper-2)}
+.ex-tag{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--paper);background:var(--ink);border-radius:6px;padding:.3em .7em;display:inline-block;margin-bottom:.9em}
+.ex-body p{margin:.5em 0}
+.ex-mats{display:flex;align-items:center;gap:clamp(8px,2vw,20px);flex-wrap:wrap;margin:1em 0}
+details.answer{margin-top:1.1em;border:1.5px dashed var(--line);border-radius:10px;background:var(--paper)}
+details.answer summary{list-style:none;cursor:pointer;padding:12px 16px;font-weight:600;font-size:15px;display:flex;align-items:center;gap:10px;border-radius:10px;transition:background .15s ease;user-select:none}
+details.answer summary::-webkit-details-marker{display:none}
+details.answer summary::before{content:'+';font-family:var(--mono);font-weight:600;font-size:18px;color:var(--res);transition:transform .2s ease;display:inline-block}
+details.answer[open] summary::before{transform:rotate(45deg)}
+details.answer summary:hover{background:var(--paper-2)}
+details.answer summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.answer-body{padding:2px 18px 16px;border-top:1px dashed var(--line);margin:0 2px}
+.answer-body .formula{margin:.9em 0}
+.answer-body .step{margin:.55em 0}
+.answer-body .key{color:var(--res);font-weight:600}
+
+/* summary table */
+.tablewrap{overflow-x:auto;margin:2em 0}
+table{border-collapse:collapse;width:100%;min-width:640px;background:var(--panel);border:1px solid var(--line)}
+th,td{border:1px solid var(--line);padding:10px 14px;text-align:left;vertical-align:top;font-size:15px}
+th{background:var(--ink);color:var(--paper);font-family:var(--mono);font-weight:600}
+td .mono{font-size:.92em}
+tbody tr:nth-child(even){background:var(--paper)}
+
+footer{border-top:1px solid var(--line);margin-top:10vh;padding:5vh 20px;text-align:center;color:var(--ink-2);font-size:14px}
+footer .mono{font-size:13px}
+
+@media (max-width:640px){
+  :root{--cs:36px}
+  .hero{padding-top:6vh}
+  .bar-row{grid-template-columns:1fr}
+  section.lens h2{font-size:1.35rem}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  html{scroll-behavior:auto}
+}
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <div class="topnav-inner">
+    <div class="brand">矩阵乘法<span>·</span>六副眼镜</div>
+    <div class="links">
+      <a href="#lens-1"><b>01</b>点积</a>
+      <a href="#lens-2"><b>02</b>列</a>
+      <a href="#lens-3"><b>03</b>行</a>
+      <a href="#lens-4"><b>04</b>外积</a>
+      <a href="#lens-5"><b>05</b>复合</a>
+      <a href="#lens-6"><b>06</b>括号</a>
+      <a href="#lens-7"><b>07</b>练习</a>
+      <a href="#summary"><b>Σ</b>总结</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="kicker">An Interactive Linear Algebra Explainer · 交互式教学页</div>
+  <h1>
+    <span class="ln1">矩阵乘法</span>
+    <span class="ln2">的六副眼镜</span>
+    <span class="ln3">Six Lenses on Matrix Multiplication — 一个定义，六种看法</span>
+  </h1>
+  <div class="chain" aria-label="dimension chain">
+    <span>( m × <span class="merge">r</span> )</span><span>·</span><span>( <span class="merge">r</span> × n )</span><span>⟶</span><span>( m × n )</span>
+  </div>
+  <p class="hint">中间的 <span class="mono">r</span> 是咬合的齿轮：所有视角的分歧，归根结底都是"这个求和轴该怎么切"。往下滚，每副眼镜都配一个可以动手玩的演示。</p>
+</header>
+
+<main>
+
+<!-- ================= LENS 1 : dot products ================= -->
+<section class="lens" id="lens-1">
+  <h2><span class="tag">01</span>Row × Column · 点积视角</h2>
+  <div class="prose">
+    <p>最经典的一副眼镜：<strong>C 的第 (i, j) 格 = A 的第 i 行 · B 的第 j 列</strong>。整幅矩阵就是一张 m×n 的"相似度记分表"——Transformer 里的 attention score（QK<sup>T</sup>）就是这么来的。</p>
+  </div>
+  <div class="formula">c<sub>ij</sub> = <span class="hl-r">a</span><sub>i1</sub>·<span class="hl-c">b</span><sub>1j</sub> + <span class="hl-r">a</span><sub>i2</sub>·<span class="hl-c">b</span><sub>2j</sub> + ⋯ + <span class="hl-r">a</span><sub>ir</sub>·<span class="hl-c">b</span><sub>rj</sub> = <span class="hl-r">row i of A</span> · <span class="hl-c">col j of B</span></div>
+  <div class="demo" id="demo-dot">
+    <div class="demo-title">playground — 点（或按 Tab 移到）C 的任意一格</div>
+    <div class="legend">
+      <span class="chip"><span class="sw sw-r"></span>A 的第 i 行（橙色）</span>
+      <span class="chip"><span class="sw sw-c"></span>B 的第 j 列（蓝色）</span>
+      <span class="chip"><span class="sw sw-p"></span>C 的 (i,j) 格（粉色）</span>
+    </div>
+    <div class="matrow" id="dot-stage"></div>
+    <div class="readout" id="dot-readout" aria-live="polite"></div>
+    <div class="controls">
+      <button class="btn" id="dot-regen" type="button">换一组数据</button>
+      <span class="mono" style="font-size:13px;color:var(--ink-2)">提示：每一格都是一次独立的 dot product</span>
+    </div>
+  </div>
+</section>
+
+<!-- ================= LENS 2 : column view ================= -->
+<section class="lens" id="lens-2">
+  <h2><span class="tag">02</span>Column View · 列视角</h2>
+  <div class="prose">
+    <p>换个大一点的单位——<strong>整列</strong>。C 的第 j 列 = A 乘 B 的第 j 列。再展开一层：它是 <strong>A 各列的线性组合，配方写在 B 的第 j 列里</strong>。A 的列是原料库，B 的列是配方单。</p>
+  </div>
+  <div class="formula"><span class="hl-p">C<sub>:j</sub></span> = A·<span class="hl-c">B<sub>:j</sub></span> = <span class="hl-c">b<sub>1j</sub></span>·a<sub>:1</sub> + <span class="hl-c">b<sub>2j</sub></span>·a<sub>:2</sub> + ⋯ + <span class="hl-c">b<sub>rj</sub></span>·a<sub>:r</sub></div>
+  <div class="demo" id="demo-colview">
+    <div class="demo-title">playground — 拖动滑块选择列 j，看 C 的一整列如何由 A 的列混出来</div>
+    <div class="legend">
+      <span class="chip"><span class="sw sw-c"></span>B 的第 j 列 = 配方</span>
+      <span class="chip"><span class="sw sw-p"></span>C 的第 j 列 = 成品</span>
+    </div>
+    <div class="matrow" id="col-stage"></div>
+    <div class="readout" id="col-readout" aria-live="polite"></div>
+    <div class="controls">
+      <div class="slider-row">j = <input type="range" id="col-slider" min="1" max="4" step="1" value="1" aria-label="选择列 j"><span class="slider-val" id="col-val">1</span></div>
+      <button class="btn ghost" id="col-regen" type="button">换一组数据</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================= LENS 3 : row view ================= -->
+<section class="lens" id="lens-3">
+  <h2><span class="tag">03</span>Row View · 行视角</h2>
+  <div class="prose">
+    <p>完全对偶的另一半：<strong>C 的第 i 行 = B 各行的线性组合，配方写在 A 的第 i 行里</strong>。列视角里 B 出系数、A 出原料；行视角里角色互换。同一次乘法，向左看和向右看各讲一个 mixing 的故事。</p>
+  </div>
+  <div class="formula"><span class="hl-p">C<sub>i:</sub></span> = <span class="hl-r">A<sub>i:</sub></span>·B = <span class="hl-r">a<sub>i1</sub></span>·b<sub>1:</sub> + <span class="hl-r">a<sub>i2</sub></span>·b<sub>2:</sub> + ⋯ + <span class="hl-r">a<sub>ir</sub></span>·b<sub>r:</sub></div>
+  <div class="demo" id="demo-rowview">
+    <div class="demo-title">playground — 拖动滑块选择行 i，看 C 的一整行如何由 B 的行混出来</div>
+    <div class="legend">
+      <span class="chip"><span class="sw sw-r"></span>A 的第 i 行 = 配方</span>
+      <span class="chip"><span class="sw sw-p"></span>C 的第 i 行 = 成品</span>
+    </div>
+    <div class="matrow" id="row-stage"></div>
+    <div class="readout" id="row-readout" aria-live="polite"></div>
+    <div class="controls">
+      <div class="slider-row">i = <input type="range" id="row-slider" min="1" max="4" step="1" value="2" aria-label="选择行 i"><span class="slider-val" id="row-val">2</span></div>
+      <button class="btn ghost" id="row-regen" type="button">换一组数据</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================= LENS 4 : outer products ================= -->
+<section class="lens" id="lens-4">
+  <h2><span class="tag">04</span>Outer Products · 外积累加</h2>
+  <div class="prose">
+    <p>现在把求和轴 k <strong>竖切</strong>：A 的第 k 列（列向量）乘 B 的第 k 行（行向量），得到一整块 rank-1 的"地毯"；r 块地毯叠起来就是 C。点积视角是"先定位再求和"，外积视角是"先整块再累加"。</p>
+    <div class="callout">这把刀是理解低秩（low-rank）的钥匙，也直通序列模型里的记忆写入：DeltaNet 的 delta rule 每一步对记忆矩阵做的，正是一次 rank-1 update。</div>
+  </div>
+  <div class="formula">C = Σ<sub>k=1..r</sub> a<sub>:k</sub>·b<sub>k:</sub><sup>T</sup>　（每一块 a<sub>:k</sub>b<sub>k:</sub><sup>T</sup> 都是 rank-1 矩阵）</div>
+  <div class="demo" id="demo-outer">
+    <div class="demo-title">playground — 按下播放，看 rank-1 地毯一块一块把 C 叠出来</div>
+    <div class="legend">
+      <span class="chip"><span class="sw sw-r"></span>A 的第 k 列</span>
+      <span class="chip"><span class="sw sw-c"></span>B 的第 k 行</span>
+      <span class="chip"><span class="sw sw-p"></span>正在叠加的 rank-1 地毯</span>
+    </div>
+    <div class="matrow" id="outer-stage"></div>
+    <div class="readout" id="outer-readout" aria-live="polite"></div>
+    <div class="controls">
+      <button class="btn" id="outer-play" type="button">▶ 播放</button>
+      <button class="btn ghost" id="outer-reset" type="button">重置</button>
+      <div class="slider-row">k = <input type="range" id="outer-slider" min="0" max="3" step="1" value="0" aria-label="叠加进度 k"><span class="slider-val" id="outer-val">0 / 3</span></div>
+      <button class="btn ghost" id="outer-regen" type="button">换一组数据</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================= LENS 5 : composition ================= -->
+<section class="lens" id="lens-5">
+  <h2><span class="tag">05</span>Composition · 映射复合</h2>
+  <div class="prose">
+    <p>前四副眼镜回答"怎么算"，这一副回答"<strong>为什么这么定义</strong>"。矩阵是线性映射的化身：如果你要求乘积矩阵恰好实现"先做 B 再做 A"的复合，那么逐列推导会<strong>被迫</strong>得到 c<sub>ij</sub>=Σ<sub>k</sub>a<sub>ik</sub>b<sub>kj</sub>——这是唯一满足 composition law 的乘法。维度链必须咬合、结合律天然成立，都从这里来。</p>
+  </div>
+  <div class="formula">(AB)<span class="hl-p">x</span> = A(B<span class="hl-p">x</span>)　——　矩阵即映射，乘即接力</div>
+  <div class="demo" id="demo-compose">
+    <div class="demo-title">playground — 用滑块调输入向量 x，两条路径实时对比</div>
+    <div class="flow" id="flow-top"></div>
+    <div class="flow flow-direct" id="flow-bottom"></div>
+    <div class="readout" id="compose-readout" aria-live="polite"></div>
+    <div class="controls">
+      <div class="slider-row">x₁ <input type="range" id="x1" min="-3" max="3" step="1" value="1" aria-label="x1"><span class="slider-val" id="x1-val">1</span></div>
+      <div class="slider-row">x₂ <input type="range" id="x2" min="-3" max="3" step="1" value="0" aria-label="x2"><span class="slider-val" id="x2-val">0</span></div>
+      <div class="slider-row">x₃ <input type="range" id="x3" min="-3" max="3" step="1" value="-2" aria-label="x3"><span class="slider-val" id="x3-val">-2</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= LENS 6 : brackets ================= -->
+<section class="lens" id="lens-6">
+  <h2><span class="tag">06</span>Brackets · 括号经济学</h2>
+  <div class="prose">
+    <p>结合律保证 <span class="mono">(AB)C = A(BC)</span> 的<strong>值</strong>不变，但<strong>账单</strong>天差地别。Attention 就是分水岭：标准 self-attention 走 (QK<sup>T</sup>)V，先造 n×n 大矩阵；Linear Attention 走 Q(K<sup>T</sup>V)，先压成 d×d 小矩阵——同一个输出，复杂度从 O(n²d) 掉到 O(nd²)。</p>
+    <div class="callout tone-b">括号视角的精神：矩阵乘法的"值"由结合律保证不变，"计算图"由你自由选择——这个自由度在 GPU 时代值真金白银。</div>
+  </div>
+  <div class="formula">path 1: (QK<sup>T</sup>)V ≈ <span class="hl-p">n²d</span> 次乘加　　vs　　path 2: Q(K<sup>T</sup>V) ≈ <span class="hl-c">nd²</span> 次乘加</div>
+  <div class="demo" id="demo-bracket">
+    <div class="demo-title">playground — 拖滑块调序列长度 n 与维度 d，看两张账单的差距</div>
+    <div class="controls" style="margin:0 0 14px">
+      <div class="slider-row">n = 2^<input type="range" id="n-slider" min="8" max="16" step="1" value="12" aria-label="序列长度 n 的指数"><span class="slider-val" id="n-val">4096</span></div>
+      <div class="slider-row">d = 2^<input type="range" id="d-slider" min="6" max="10" step="1" value="7" aria-label="维度 d 的指数"><span class="slider-val" id="d-val">128</span></div>
+    </div>
+    <div class="bars">
+      <div class="bar-row">
+        <div class="bar-label">(QK<sup>T</sup>)V · O(n²d)</div>
+        <div class="bar-track"><div class="bar-fill f1" id="bar1" style="width:50%"></div><span class="bar-num" id="bar1-num"></span></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label">Q(K<sup>T</sup>V) · O(nd²)</div>
+        <div class="bar-track"><div class="bar-fill f2" id="bar2" style="width:50%"></div><span class="bar-num" id="bar2-num"></span></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label">attention 矩阵显存（n², fp32）</div>
+        <div class="bar-track"><div class="bar-fill f1" id="bar3" style="width:50%;opacity:.55"></div><span class="bar-num" id="bar3-num"></span></div>
+      </div>
+    </div>
+    <div class="verdict" id="bracket-verdict"></div>
+  </div>
+</section>
+
+<!-- ================= exercises ================= -->
+<section class="lens" id="lens-7">
+  <h2><span class="tag">07</span>Exercises · 练一练</h2>
+  <div class="prose">
+    <p>六道题，一副眼镜一道。先盖住答案自己算，再点开核对。<strong>练 2、3、4 用的是同一组矩阵</strong>——它们的答案会互相印证，这正是"四副眼镜看同一场乘法"的意思。练 6 可以直接回到 06 的计算器里验证。</p>
+  </div>
+
+  <!-- E1 dot product -->
+  <div class="exercise">
+    <span class="ex-tag">练 1 · 点积视角</span>
+    <div class="ex-body">
+      <p>给定下面的 A 与 B，<strong>只算两格</strong>：c<sub>12</sub> 和 c<sub>21</sub>。</p>
+      <div class="ex-mats">
+        <div class="mat-static" data-label="A" data-color="var(--row)" data-rows='[[2,1,0],[-1,3,2]]'></div>
+        <div class="op">×</div>
+        <div class="mat-static" data-label="B" data-color="var(--col)" data-rows='[[1,4],[0,-2],[3,1]]'></div>
+      </div>
+    </div>
+    <details class="answer">
+      <summary>答案与解析</summary>
+      <div class="answer-body">
+        <p class="step">c<sub>12</sub> = A 第 1 行 · B 第 2 列 = (2, 1, 0) · (4, −2, 1)：</p>
+        <div class="formula">c<sub>12</sub> = <span class="hl-r">2</span>·<span class="hl-c">4</span> + <span class="hl-r">1</span>·<span class="hl-c">(−2)</span> + <span class="hl-r">0</span>·<span class="hl-c">1</span> = 8 − 2 + 0 = <span class="hl-p">6</span></div>
+        <p class="step">c<sub>21</sub> = A 第 2 行 · B 第 1 列 = (−1, 3, 2) · (1, 0, 3)：</p>
+        <div class="formula">c<sub>21</sub> = <span class="hl-r">(−1)</span>·<span class="hl-c">1</span> + <span class="hl-r">3</span>·<span class="hl-c">0</span> + <span class="hl-r">2</span>·<span class="hl-c">3</span> = −1 + 0 + 6 = <span class="hl-p">5</span></div>
+        <p class="step key">要点：每一格都是一次独立的 dot product——算一格不需要知道其他格。</p>
+      </div>
+    </details>
+  </div>
+
+  <!-- E2 column view -->
+  <div class="exercise">
+    <span class="ex-tag">练 2 · 列视角</span>
+    <div class="ex-body">
+      <p>给定 A (3×2) 与 B (2×3)，<strong>不要逐格算</strong>：把 C 的第 2 列写成 A 各列的线性组合，再算出来。</p>
+      <div class="ex-mats">
+        <div class="mat-static" data-label="A" data-color="var(--row)" data-rows='[[1,2],[0,1],[3,0]]'></div>
+        <div class="op">×</div>
+        <div class="mat-static" data-label="B" data-color="var(--col)" data-rows='[[2,1,0],[-1,3,2]]'></div>
+      </div>
+    </div>
+    <details class="answer">
+      <summary>答案与解析</summary>
+      <div class="answer-body">
+        <p class="step">配方在 B 的第 2 列：B<sub>:2</sub> = (1, 3)<sup>T</sup>，所以 C<sub>:2</sub> = 1·a<sub>:1</sub> + 3·a<sub>:2</sub>：</p>
+        <div class="formula"><span class="hl-p">C<sub>:2</sub></span> = <span class="hl-c">1</span>·(1, 0, 3)<sup>T</sup> + <span class="hl-c">3</span>·(2, 1, 0)<sup>T</sup> = (1+6, 0+3, 3+0)<sup>T</sup> = <span class="hl-p">(7, 3, 3)<sup>T</sup></span></div>
+        <p class="step key">要点：C 的第 j 列 = A 的列按"B 第 j 列的配方"混合。这题只用 A 的列和 B 的一列，B 其余两列根本没出场。</p>
+      </div>
+    </details>
+  </div>
+
+  <!-- E3 row view -->
+  <div class="exercise">
+    <span class="ex-tag">练 3 · 行视角</span>
+    <div class="ex-body">
+      <p>同一组 A、B（见练 2）。这次用<strong>行视角</strong>：把 C 的第 3 行写成 B 各行的线性组合，并算出来。</p>
+    </div>
+    <details class="answer">
+      <summary>答案与解析</summary>
+      <div class="answer-body">
+        <p class="step">配方在 A 的第 3 行：A<sub>3:</sub> = (3, 0)，所以 C<sub>3:</sub> = 3·b<sub>1:</sub> + 0·b<sub>2:</sub>：</p>
+        <div class="formula"><span class="hl-p">C<sub>3:</sub></span> = <span class="hl-r">3</span>·(2, 1, 0) + <span class="hl-r">0</span>·(−1, 3, 2) = <span class="hl-p">(6, 3, 0)</span></div>
+        <p class="step key">要点：与练 2 对偶——角色互换，A 出系数、B 出原料。注意 C<sub>3:2</sub> = 3，和练 2 算出的 C<sub>:2</sub> 第 3 个分量完全一致：两种切法在同一个格子上会师。</p>
+      </div>
+    </details>
+  </div>
+
+  <!-- E4 outer products -->
+  <div class="exercise">
+    <span class="ex-tag">练 4 · 外积视角</span>
+    <div class="ex-body">
+      <p>还是同一组 A、B。把 C 写成 <strong>r = 2 块 rank-1 地毯之和</strong>：分别算出 a<sub>:1</sub>b<sub>1:</sub><sup>T</sup> 与 a<sub>:2</sub>b<sub>2:</sub><sup>T</sup>，再相加得到完整的 C。</p>
+    </div>
+    <details class="answer">
+      <summary>答案与解析</summary>
+      <div class="answer-body">
+        <p class="step">第一块地毯：a<sub>:1</sub> = (1, 0, 3)<sup>T</sup>，b<sub>1:</sub> = (2, 1, 0)：</p>
+        <div class="ex-mats">
+          <div class="mat-static" data-label="a:1·b1:ᵀ" data-rows='[[2,1,0],[0,0,0],[6,3,0]]'></div>
+        </div>
+        <p class="step">第二块地毯：a<sub>:2</sub> = (2, 1, 0)<sup>T</sup>，b<sub>2:</sub> = (−1, 3, 2)：</p>
+        <div class="ex-mats">
+          <div class="mat-static" data-label="a:2·b2:ᵀ" data-rows='[[-2,6,4],[-1,3,2],[0,0,0]]'></div>
+        </div>
+        <p class="step">两块叠加：</p>
+        <div class="formula">C = <span class="hl-p">[[0, 7, 4], [−1, 3, 2], [6, 3, 0]]</span></div>
+        <p class="step key">印证时刻：C 的第 2 列 (7, 3, 3) 正是练 2 的答案，第 3 行 (6, 3, 0) 正是练 3 的答案——同一场乘法，三种切法，零矛盾。另外注意两块地毯各自都是 rank-1（每一行都是同一行的倍数）。</p>
+      </div>
+    </details>
+  </div>
+
+  <!-- E5 composition -->
+  <div class="exercise">
+    <span class="ex-tag">练 5 · 复合视角</span>
+    <div class="ex-body">
+      <p>在 R² 上：B = 向 x 轴的投影 <span class="mono">[[1,0],[0,0]]</span>，A = 逆时针旋转 90° <span class="mono">[[0,−1],[1,0]]</span>。求 C = AB，并用"先投影再旋转"描述它对任意向量 (x, y) 的作用。再算 BA，说明乘法为什么不交换。</p>
+    </div>
+    <details class="answer">
+      <summary>答案与解析</summary>
+      <div class="answer-body">
+        <div class="formula">C = AB = <span class="hl-p">[[0, 0], [1, 0]]</span></div>
+        <p class="step">分两步看 (x, y)：先 B 投影得 (x, 0)，再 A 旋转 90° 得 (0, x)——乘积矩阵一步到位：C(x, y) = <span class="key">(0, x)</span>。</p>
+        <p class="step">反过来：BA = <span class="mono">[[0,−1],[0,0]]</span>，它把 (x, y) 映到 <span class="key">(−y, 0)</span>：先旋转再投影。</p>
+        <p class="step key">要点：AB ≠ BA，因为"先投影再旋转"和"先旋转再投影"本来就是两个不同的映射。矩阵乘法不交换，根子在函数复合不交换——这正是复合视角的力量。</p>
+      </div>
+    </details>
+  </div>
+
+  <!-- E6 brackets -->
+  <div class="exercise">
+    <span class="ex-tag">练 6 · 括号经济学</span>
+    <div class="ex-body">
+      <p>Attention 里 n = 8192，d = 128（Q, K, V ∈ R<sup>n×d</sup>）。分别估算 (QK<sup>T</sup>)V 与 Q(K<sup>T</sup>V) 的乘加次数（MACs，按 n²d 与 nd² 计），哪条路径便宜、便宜多少倍？再算一下 n×n attention 矩阵（fp32）要占多少显存。</p>
+    </div>
+    <details class="answer">
+      <summary>答案与解析</summary>
+      <div class="answer-body">
+        <p class="step">path 1 = n²d = 8192² × 128 ≈ <span class="mono">8.59 G MACs</span>；path 2 = nd² = 8192 × 128² ≈ <span class="mono">134.2 M MACs</span>。</p>
+        <p class="step">比值恰好是 n / d = 8192 / 128 = <span class="key">64</span>——path 2 便宜 64 倍，而且序列越长优势越大。</p>
+        <p class="step">显存：8192² × 4 B ≈ 268.4 MB（256 MiB）——这还只是一个 head 一层。</p>
+        <p class="step key">要点：结合律保证结果相同，括号决定账单。回到页面 06 的计算器，把 n 拨到 8192、d 拨到 128，可以直接核对这些数字。</p>
+      </div>
+    </details>
+  </div>
+
+  <!-- E7 challenge -->
+  <div class="exercise">
+    <span class="ex-tag">挑战 · 六副眼镜合起来</span>
+    <div class="ex-body">
+      <p>开放思考：Linear Attention 选择 Q(K<sup>T</sup>V) 括号后，可以定义 <span class="mono">S = K<sup>T</sup>V</span>（d×d）。请用<strong>外积视角</strong>写出 S 的逐 token 累加形式，并解释：为什么这让"边读序列边更新一块固定大小的记忆"成为可能？它和我们聊过的 DeltaNet rank-1 update 有什么神似之处？</p>
+    </div>
+    <details class="answer">
+      <summary>参考思路（此题无唯一答案）</summary>
+      <div class="answer-body">
+        <p class="step">按 token 把 K、V 的行取出来：S = K<sup>T</sup>V = <span class="mono">Σ<sub>t</sub> k<sub>t</sub><sup>T</sup> v<sub>t</sub></span>——每个 token 贡献一块 d×d 的 rank-1 地毯。</p>
+        <p class="step">于是推理/训练可以写成 recurrence：S<sub>t</sub> = S<sub>t−1</sub> + k<sub>t</sub><sup>T</sup>v<sub>t</sub>，o<sub>t</sub> = q<sub>t</sub> S<sub>t</sub>。记忆大小恒为 d×d，与序列长度无关——这就是 Linear Attention 能翻译成 RNN 形式的原因。</p>
+        <p class="step">与 DeltaNet 的神似：DeltaNet 同样维护一块矩阵记忆，同样每步 rank-1 写入，只是写入规则从"无脑累加"升级为 delta rule——先按旧记忆读出当前预测、只写入误差部分（写入/擦除更讲究）。</p>
+        <p class="step key">要点：括号视角给了便宜的计算顺序，外积视角给了递推的记忆解释——两副眼镜叠着戴，Linear Attention 的全貌就出来了。</p>
+      </div>
+    </details>
+  </div>
+</section>
+
+<!-- ================= summary ================= -->
+<section class="lens" id="summary">
+  <h2><span class="tag">Σ</span>一张表收拢六副眼镜</h2>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>视角</th><th>核心公式</th><th>你在看什么</th><th>典型用武之地</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>01 点积</strong></td><td class="mono">c<sub>ij</sub> = a<sub>i:</sub> · b<sub>:j</sub></td><td>一格 = 一次相似度打分</td><td>attention scores、Gram 矩阵</td></tr>
+        <tr><td><strong>02 列</strong></td><td class="mono">C<sub>:j</sub> = A·B<sub>:j</sub></td><td>A 列的 mixing，B 出系数</td><td>column space、image、基变换</td></tr>
+        <tr><td><strong>03 行</strong></td><td class="mono">C<sub>i:</sub> = A<sub>i:</sub>·B</td><td>B 行的 mixing，A 出系数</td><td>row space、左乘的语义</td></tr>
+        <tr><td><strong>04 外积</strong></td><td class="mono">C = Σ<sub>k</sub> a<sub>:k</sub>b<sub>k:</sub><sup>T</sup></td><td>rank-1 地毯逐层叠加</td><td>低秩 / SVD、DeltaNet 记忆写入</td></tr>
+        <tr><td><strong>05 复合</strong></td><td class="mono">(AB)x = A(Bx)</td><td>矩阵即映射，乘即接力</td><td>定义的来源、NN forward</td></tr>
+        <tr><td><strong>06 括号</strong></td><td class="mono">(AB)C vs A(BC)</td><td>同值不同价</td><td>Linear Attention、计算图优化</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="prose">
+    <p><strong>一句话总结：</strong>矩阵乘法只有一个定义，但 01–04 是四种"组织求和的刀法"（按格切、按列切、按行切、按层切），05 是这个定义存在的理由（复合），06 是这个定义送给工程师的自由（结合律下任选括号）。看到任何一行 matmul 代码时能在六副眼镜之间无缝切换，就是熟练的标志。</p>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div>矩阵乘法的六副眼镜 · Six Lenses on Matrix Multiplication</div>
+  <div class="mono" style="margin-top:6px">interactive explainer · made by Ember · for teaching use</div>
+</footer>
+
+<script>
+/* ================= helpers ================= */
+const $ = s => document.querySelector(s);
+const randInt = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+const randMat = (r, c, lo = -4, hi = 9) =>
+  Array.from({ length: r }, () => Array.from({ length: c }, () => randInt(lo, hi)));
+const matMul = (A, B) => {
+  const m = A.length, r = B.length, n = B[0].length;
+  const C = Array.from({ length: m }, () => Array(n).fill(0));
+  for (let i = 0; i < m; i++) for (let j = 0; j < n; j++)
+    for (let k = 0; k < r; k++) C[i][j] += A[i][k] * B[k][j];
+  return C;
+};
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+const sub = n => String(n).split('').map(d => '₀₁₂₃₄₅₆₇₈₉'[+d] ?? d).join('');
+const signed = v => (v < 0 ? `(${v})` : `${v}`);
+
+/* matrix renderer: returns {wrap, cells} — cells[i][j] are the DOM nodes */
+function renderMat(mat, label, labelCls, cellTag = 'div') {
+  const box = el('div', 'matbox');
+  const lab = el('div', 'mat-label', label);
+  if (labelCls) lab.style.color = labelCls;
+  box.appendChild(lab);
+  const grid = el('div', 'mat');
+  grid.style.gridTemplateColumns = `repeat(${mat[0].length}, var(--cs,44px))`;
+  const cells = mat.map(row => row.map(v => {
+    const c = el(cellTag, 'cell', v);
+    grid.appendChild(c);
+    return c;
+  }));
+  box.appendChild(grid);
+  return { wrap: box, cells, grid };
+}
+function opSym(t) { return el('div', 'op', t); }
+
+/* ================= LENS 1 : dot products ================= */
+const dotDemo = (() => {
+  let A, B, C, sel = { i: 1, j: 2 };
+  const stage = $('#dot-stage'), readout = $('#dot-readout');
+  let cellsA, cellsB, cellsC;
+
+  function build() {
+    A = randMat(4, 3); B = randMat(3, 4); C = matMul(A, B);
+    stage.innerHTML = '';
+    const mA = renderMat(A, 'A', 'var(--row)');
+    const mB = renderMat(B, 'B', 'var(--col)');
+    const mC = renderMat(C, 'C', 'var(--res)', 'button');
+    cellsA = mA.cells; cellsB = mB.cells; cellsC = mC.cells;
+    stage.append(mA.wrap, opSym('×'), mB.wrap, opSym('='), mC.wrap);
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
+      const cell = cellsC[i][j];
+      cell.type = 'button';
+      cell.setAttribute('aria-label', `C 第 ${i + 1} 行第 ${j + 1} 列`);
+      ['mouseenter', 'focus', 'click'].forEach(ev =>
+        cell.addEventListener(ev, () => { sel = { i, j }; paint(); }));
+    }
+    paint();
+  }
+  function paint() {
+    const { i, j } = sel;
+    cellsA.flat().forEach(c => c.className = 'cell dim');
+    cellsB.flat().forEach(c => c.className = 'cell dim');
+    cellsC.flat().forEach(c => c.className = 'cell');
+    for (let k = 0; k < 3; k++) {
+      cellsA[i][k].className = 'cell hl-r';
+      cellsB[k][j].className = 'cell hl-c';
+    }
+    cellsC[i][j].className = 'cell hl-p';
+    const terms = [], prods = [];
+    for (let k = 0; k < 3; k++) {
+      terms.push(`<span class="t-r">${signed(A[i][k])}</span>·<span class="t-c">${signed(B[k][j])}</span>`);
+      prods.push(signed(A[i][k] * B[k][j]));
+    }
+    readout.innerHTML =
+      `c${sub(i + 1)}${sub(j + 1)} = ${terms.join(' + ')} = ${prods.join(' + ')} = <span class="t-p">${C[i][j]}</span>` +
+      `　<span style="color:var(--ink-2)">← 第 ${i + 1} 行 × 第 ${j + 1} 列，一次 dot product</span>`;
+  }
+  $('#dot-regen').addEventListener('click', build);
+  build();
+})();
+
+/* ================= LENS 2 : column view ================= */
+const colDemo = (() => {
+  let A, B, C, j = 0;
+  const stage = $('#col-stage'), readout = $('#col-readout'),
+        slider = $('#col-slider'), val = $('#col-val');
+  let cellsA, cellsB, cellsC;
+
+  function build() {
+    A = randMat(4, 3); B = randMat(3, 4); C = matMul(A, B);
+    stage.innerHTML = '';
+    const mA = renderMat(A, 'A（原料库）', 'var(--row)');
+    const mB = renderMat(B, 'B（配方单）', 'var(--col)');
+    const mC = renderMat(C, 'C（成品）', 'var(--res)');
+    cellsA = mA.cells; cellsB = mB.cells; cellsC = mC.cells;
+    stage.append(mA.wrap, opSym('×'), mB.wrap, opSym('='), mC.wrap);
+    paint();
+  }
+  function paint() {
+    cellsA.flat().forEach(c => c.className = 'cell');
+    cellsB.flat().forEach(c => c.className = 'cell dim');
+    cellsC.flat().forEach(c => c.className = 'cell dim');
+    for (let k = 0; k < 3; k++) cellsB[k][j].className = 'cell hl-c';
+    for (let i = 0; i < 4; i++) cellsC[i][j].className = 'cell hl-p';
+    val.textContent = j + 1;
+    const terms = [];
+    for (let k = 0; k < 3; k++)
+      terms.push(`<span class="t-c">${signed(B[k][j])}</span>·a${sub(':' + (k + 1))}`);
+    readout.innerHTML =
+      `<span class="t-p">C${sub(':' + (j + 1))}</span> = ${terms.join(' + ')}　` +
+      `<span style="color:var(--ink-2)">← C 的第 ${j + 1} 列 = A 的 3 列按 B 第 ${j + 1} 列的配方混合</span>`;
+  }
+  slider.addEventListener('input', () => { j = +slider.value - 1; paint(); });
+  $('#col-regen').addEventListener('click', build);
+  build();
+})();
+
+/* ================= LENS 3 : row view ================= */
+const rowDemo = (() => {
+  let A, B, C, i = 1;
+  const stage = $('#row-stage'), readout = $('#row-readout'),
+        slider = $('#row-slider'), val = $('#row-val');
+  let cellsA, cellsB, cellsC;
+
+  function build() {
+    A = randMat(4, 3); B = randMat(3, 4); C = matMul(A, B);
+    stage.innerHTML = '';
+    const mA = renderMat(A, 'A（配方单）', 'var(--row)');
+    const mB = renderMat(B, 'B（原料库）', 'var(--col)');
+    const mC = renderMat(C, 'C（成品）', 'var(--res)');
+    cellsA = mA.cells; cellsB = mB.cells; cellsC = mC.cells;
+    stage.append(mA.wrap, opSym('×'), mB.wrap, opSym('='), mC.wrap);
+    paint();
+  }
+  function paint() {
+    cellsA.flat().forEach(c => c.className = 'cell dim');
+    cellsB.flat().forEach(c => c.className = 'cell');
+    cellsC.flat().forEach(c => c.className = 'cell dim');
+    for (let k = 0; k < 3; k++) cellsA[i][k].className = 'cell hl-r';
+    for (let j = 0; j < 4; j++) cellsC[i][j].className = 'cell hl-p';
+    val.textContent = i + 1;
+    const terms = [];
+    for (let k = 0; k < 3; k++)
+      terms.push(`<span class="t-r">${signed(A[i][k])}</span>·b${sub((k + 1) + ':')}`);
+    readout.innerHTML =
+      `<span class="t-p">C${sub((i + 1) + ':')}</span> = ${terms.join(' + ')}　` +
+      `<span style="color:var(--ink-2)">← C 的第 ${i + 1} 行 = B 的 3 行按 A 第 ${i + 1} 行的配方混合</span>`;
+  }
+  slider.addEventListener('input', () => { i = +slider.value - 1; paint(); });
+  $('#row-regen').addEventListener('click', build);
+  build();
+})();
+
+/* ================= LENS 4 : outer products ================= */
+const outerDemo = (() => {
+  let A, B, C, k = 0, playing = false, timer = null, inView = true;
+  const stage = $('#outer-stage'), readout = $('#outer-readout'),
+        slider = $('#outer-slider'), val = $('#outer-val'),
+        playBtn = $('#outer-play');
+
+  function build() {
+    A = randMat(4, 3); B = randMat(3, 4); C = matMul(A, B);
+    k = 0; slider.value = 0;
+    paint();
+  }
+  function paint() {
+    stage.innerHTML = '';
+    // A with col k highlighted
+    const mA = renderMat(A, 'A', 'var(--row)');
+    const mB = renderMat(B, 'B', 'var(--col)');
+    mA.cells.flat().forEach(c => c.classList.add('dim'));
+    mB.cells.flat().forEach(c => c.classList.add('dim'));
+    if (k >= 1) {
+      for (let i = 0; i < 4; i++) mA.cells[i][k - 1].className = 'cell hl-r';
+      for (let j = 0; j < 4; j++) mB.cells[k - 1][j].className = 'cell hl-c';
+    }
+    // current rank-1 slab
+    const slab = Array.from({ length: 4 }, (_, i) =>
+      Array.from({ length: 4 }, (_, j) => k >= 1 ? A[i][k - 1] * B[k - 1][j] : ''));
+    const mS = renderMat(slab, k >= 1 ? `rank-1 地毯 k=${k}` : 'rank-1 地毯', 'var(--res)');
+    if (k >= 1) mS.cells.flat().forEach(c => c.classList.add('hl-p'));
+    else mS.cells.flat().forEach(c => c.classList.add('ghost'));
+    // running sum
+    const part = Array.from({ length: 4 }, (_, i) =>
+      Array.from({ length: 4 }, (_, j) => {
+        let s = 0;
+        for (let t = 0; t < k; t++) s += A[i][t] * B[t][j];
+        return k === 0 ? '' : s;
+      }));
+    const mP = renderMat(part, `部分和 C⁽${k}⁾`, 'var(--res)');
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
+      if (k === 0) mP.cells[i][j].classList.add('ghost');
+      else if (k === 3) mP.cells[i][j].classList.add('hl-p');
+    }
+    stage.append(mA.wrap, opSym('×'), mB.wrap, opSym('→'), mS.wrap, opSym('⇒'), mP.wrap);
+    val.textContent = `${k} / 3`;
+    if (k === 0) {
+      readout.innerHTML = `还没开始叠。按下 ▶ 或拖动 k，看第一块地毯 a${sub(':1')}·b${sub('1:')}ᵀ 盖上去。`;
+    } else if (k < 3) {
+      readout.innerHTML = `已叠加 <span class="t-p">${k}</span> / 3 块 rank-1 地毯：C⁽${k}⁾ = Σ<sub>t=1..${k}</sub> a${sub(':t')}·b${sub('t:')}ᵀ`;
+    } else {
+      readout.innerHTML = `✓ 三块地毯叠完：Σ<sub>k=1..3</sub> a${sub(':k')}·b${sub('k:')}ᵀ = <span class="t-p">C</span>，和逐格点积算出来的完全一样。`;
+    }
+    playBtn.textContent = playing ? '⏸ 暂停' : (k >= 3 ? '↻ 重播' : '▶ 播放');
+  }
+  function stop() { playing = false; clearInterval(timer); timer = null; paint(); }
+  function play() {
+    if (k >= 3) { k = 0; }
+    playing = true;
+    timer = setInterval(() => {
+      if (!inView) return;
+      k++;
+      if (k >= 3) { k = 3; paint(); stop(); return; }
+      slider.value = k; paint();
+    }, 1300);
+    paint();
+  }
+  playBtn.addEventListener('click', () => playing ? stop() : play());
+  $('#outer-reset').addEventListener('click', () => { stop(); k = 0; slider.value = 0; paint(); });
+  slider.addEventListener('input', () => { stop(); k = +slider.value; paint(); });
+  $('#outer-regen').addEventListener('click', () => { stop(); build(); });
+  new IntersectionObserver(es => { inView = es[0].isIntersecting; }, { threshold: 0.2 })
+    .observe($('#demo-outer'));
+  build();
+})();
+
+/* ================= LENS 5 : composition ================= */
+const composeDemo = (() => {
+  const A = [[1, 2], [0, -1], [3, 1]];
+  const B = [[2, 0, 1], [-1, 1, 2]];
+  const C = matMul(A, B); // 3x3
+  const readout = $('#compose-readout');
+  const ids = ['x1', 'x2', 'x3'];
+
+  const arrowSVG = `<svg width="64" height="14" viewBox="0 0 64 14" aria-hidden="true">
+    <line x1="0" y1="7" x2="54" y2="7" stroke="currentColor" stroke-width="2.2"/>
+    <polygon points="54,1 64,7 54,13" fill="currentColor"/></svg>`;
+
+  function spaceBox(title, vecText, accent) {
+    const b = el('div', 'space');
+    if (accent) b.style.borderColor = 'var(--res)';
+    b.appendChild(el('div', '', title));
+    b.appendChild(el('div', 'vec mono', vecText));
+    return b;
+  }
+  function arrow(label, direct) {
+    const a = el('div', 'farrow' + (direct ? ' direct' : ''));
+    const l = el('div', 'lbl', label);
+    if (direct) l.style.color = 'var(--res)';
+    a.appendChild(l);
+    a.insertAdjacentHTML('beforeend', arrowSVG);
+    return a;
+  }
+  const mv = (M, v) => M.map(row => row.reduce((s, a, k) => s + a * v[k], 0));
+  const fmt = v => `[ ${v.join(', ')} ]`;
+
+  function paint() {
+    const x = ids.map(id => +$('#' + id).value);
+    ids.forEach((id, t) => $('#' + id + '-val').textContent = x[t]);
+    const Bx = mv(B, x), ABx = mv(A, Bx), Cx = mv(C, x);
+    const top = $('#flow-top'), bot = $('#flow-bottom');
+    top.innerHTML = ''; bot.innerHTML = '';
+    top.append(spaceBox('R³ · x', fmt(x)), arrow('B (2×3)'), spaceBox('R² · Bx', fmt(Bx)),
+               arrow('A (3×2)'), spaceBox('R³ · A(Bx)', fmt(ABx)));
+    bot.append(spaceBox('R³ · x', fmt(x)), arrow('C = AB (3×3)', true),
+               spaceBox('R³ · Cx', fmt(Cx), true));
+    const same = ABx.every((v, t) => v === Cx[t]);
+    readout.innerHTML =
+      `接力路径：A(Bx) = <span class="t-p">${fmt(ABx)}</span>　直达路径：Cx = <span class="t-p">${fmt(Cx)}</span>　` +
+      (same ? `<span class="t-p">✓ 一模一样</span> <span style="color:var(--ink-2)">—— 乘积矩阵 C 把两步接力压缩成了一步</span>` : '不相等？');
+  }
+  ids.forEach(id => $('#' + id).addEventListener('input', paint));
+  paint();
+})();
+
+/* ================= LENS 6 : bracket economics ================= */
+const bracketDemo = (() => {
+  const ns = $('#n-slider'), ds = $('#d-slider');
+  const fmtBig = v => {
+    if (v >= 1e12) return (v / 1e12).toFixed(2) + ' T MACs';
+    if (v >= 1e9) return (v / 1e9).toFixed(2) + ' G MACs';
+    if (v >= 1e6) return (v / 1e6).toFixed(2) + ' M MACs';
+    return Math.round(v).toLocaleString() + ' MACs';
+  };
+  const fmtBytes = b => {
+    if (b >= 1e9) return (b / 1e9).toFixed(2) + ' GB';
+    if (b >= 1e6) return (b / 1e6).toFixed(2) + ' MB';
+    if (b >= 1e3) return (b / 1e3).toFixed(2) + ' KB';
+    return b + ' B';
+  };
+  function paint() {
+    const n = 2 ** (+ns.value), d = 2 ** (+ds.value);
+    $('#n-val').textContent = n.toLocaleString();
+    $('#d-val').textContent = d.toLocaleString();
+    const f1 = n * n * d, f2 = n * d * d, mem = n * n * 4;
+    const items = [
+      { v: f1, bar: $('#bar1'), num: $('#bar1-num') },
+      { v: f2, bar: $('#bar2'), num: $('#bar2-num') },
+      { v: mem, bar: $('#bar3'), num: $('#bar3-num') },
+    ];
+    const maxLog = Math.log10(Math.max(f1, f2, mem));
+    items.forEach(({ v, bar, num }) => {
+      const w = 6 + 94 * (Math.log10(v) / maxLog);
+      bar.style.width = w.toFixed(1) + '%';
+      num.textContent = num === $('#bar3-num') ? fmtBytes(v) : fmtBig(v);
+    });
+    const ratio = f1 / f2;
+    const vEl = $('#bracket-verdict');
+    if (ratio > 1.05) {
+      vEl.innerHTML = `n / d = <span class="big">${ratio.toFixed(ratio >= 10 ? 0 : 1)}</span> —— 先算 K<sup>T</sup>V 便宜 ${ratio.toFixed(ratio >= 10 ? 0 : 1)}×：长序列场景，Linear Attention 血赚。`;
+    } else if (ratio < 0.95) {
+      const r2 = 1 / ratio;
+      vEl.innerHTML = `d / n = <span class="big">${r2.toFixed(r2 >= 10 ? 0 : 1)}</span> —— 反而是先算 QK<sup>T</sup> 便宜 ${r2.toFixed(r2 >= 10 ? 0 : 1)}×：序列很短时，标准路径反而划算。括号要看账本下菜。`;
+    } else {
+      vEl.innerHTML = `n ≈ d —— 两条路径成本几乎一样，选哪边都行。`;
+    }
+  }
+  ns.addEventListener('input', paint);
+  ds.addEventListener('input', paint);
+  paint();
+})();
+/* hydrate static matrices in exercises */
+document.querySelectorAll('.mat-static').forEach(d => {
+  const M = JSON.parse(d.dataset.rows);
+  const { wrap } = renderMat(M, d.dataset.label || '', d.dataset.color || undefined);
+  d.replaceWith(wrap);
+});
+</script>
+</body>
+</html>
