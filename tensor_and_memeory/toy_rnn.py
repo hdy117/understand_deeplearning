@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import argparse
+import logging
 
 
 class RNNCell(nn.Module):
@@ -46,8 +47,8 @@ class ToyRNN(nn.Module):
         )
         self.lm_head = nn.Linear(in_features=d_model, out_features=output_size)
 
-    def _print_meta_(self):
-        print(
+    def _print_info_meta_(self):
+        logging.info(
             f"self.n_layer:{self.n_layer}, self.d_model:{self.d_model}, self.embedding_size:{self.embedding_size}"
         )
 
@@ -93,7 +94,7 @@ class Config:
     @classmethod
     def get_itos_list(cls) -> list[str]:
         json_dict = json.loads(meta_path.read_text(encoding="utf-8"))
-        print(f"json_dict:{json_dict}")
+        logging.info(f"json_dict:{json_dict}")
         assert "itos" in json_dict.keys()
         return json_dict["itos"]
 
@@ -114,13 +115,15 @@ def dataset_test():
     x, y = next(iter(loader))
 
     assert torch.equal(x[:, 1:], y[:, :-1]), "targets must be shifted by one character"
-    print(f"vocab_size: {len(Config.itos)}, x: {tuple(x.shape)}, y: {tuple(y.shape)}")
+    logging.info(
+        f"vocab_size: {len(Config.itos)}, x: {tuple(x.shape)}, y: {tuple(y.shape)}"
+    )
     for row in range(x.size(0)):
         x_text = Config.int_list_to_str(x[row].tolist())
         y_text = Config.int_list_to_str(y[row].tolist())
-        print(f"sample {row} x: {repr(x_text[:30])}")
-        print(f"sample {row} y: {repr(y_text[:30])}")
-        print(f"shift aligned: {x_text[1:] == y_text[:-1]}")
+        logging.info(f"sample {row} x: {repr(x_text[:30])}")
+        logging.info(f"sample {row} y: {repr(y_text[:30])}")
+        logging.info(f"shift aligned: {x_text[1:] == y_text[:-1]}")
 
 
 def train(rnn: ToyRNN = None):
@@ -141,7 +144,7 @@ def train(rnn: ToyRNN = None):
     dataloader = DataLoader(
         dataset, batch_size=Config.batch_size, shuffle=True, num_workers=4
     )
-    print(
+    logging.info(
         f"seq_len:{Config.seq_len}, batch_size:{Config.batch_size}, device:{Config.device}"
     )
 
@@ -156,7 +159,7 @@ def train(rnn: ToyRNN = None):
             optimizer.step()
             optimizer.zero_grad()
         scheduler.step()
-        print(f"epoch_i:{epoch_i}, epoch:{Config.epoch}")
+        logging.info(f"epoch_i:{epoch_i}, epoch:{Config.epoch}")
 
 
 def eval(rnn: ToyRNN = None):
@@ -173,6 +176,7 @@ def set_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     args: argparse.Namespace = set_args()
 
     dataset_test()
@@ -180,10 +184,10 @@ if __name__ == "__main__":
     toy_rnn: ToyRNN = ToyRNN(
         n_layer=3, embedding_size=14, d_model=64, output_size=len(Config.itos)
     ).to(Config.device)
-    toy_rnn._print_meta_()
+    toy_rnn._print_info_meta_()
 
     if args.run_mode == "train":
-        print(f"run in {args.run_mode} mode")
+        logging.info(f"run in {args.run_mode} mode")
         train(toy_rnn)
     else:
-        print(f"run in {args.run_mode} mode")
+        logging.info(f"run in {args.run_mode} mode")

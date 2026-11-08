@@ -1427,6 +1427,33 @@ html[data-theme="paper"] .am-md table { font-family: var(--font-sans); }
 </ul>
 <blockquote>
 <p><strong>方向约定，全文唯一，后面不再改</strong>：<math dir="ltr" data-am-tex="$S\in\mathbb{R}^{d_v\times d_k}$"><mrow><mi>S</mi><mo>∈</mo></mrow><mrow><msup><mi>ℝ</mi><mrow><msub><mi>d</mi><mi>v</mi></msub><mo>×</mo><msub><mi>d</mi><mi>k</mi></msub></mrow></msup></mrow></math>，行对应 value 通道，列对应 key 方向。有的资料写成 <math dir="ltr" data-am-tex="$S=\sum k v^\top$"><mrow><mi>S</mi><mo>=</mo></mrow><mrow><mo movablelimits="false">∑</mo><mi>k</mi><msup><mi>v</mi><mi class="tml-sml-pad">⊤</mi></msup></mrow></math> 再配 <math dir="ltr" data-am-tex="$q^\top S$"><mrow><msup><mi>q</mi><mi class="tml-med-pad">⊤</mi></msup><mi>S</mi></mrow></math>，两者互为转置、数学等价，但混着读会要命 —— 你在第 5 章看到 <math dir="ltr" data-am-tex="$kv^\top$"><mrow><mi>k</mi><msup><mi>v</mi><mi class="tml-sml-pad">⊤</mi></msup></mrow></math>、第 6 章看到 <math dir="ltr" data-am-tex="$Sk$"><mrow><mi>S</mi><mi>k</mi></mrow></math>，会以为作者换了模型，其实只是换了纸的朝向。</p>
+<p><strong>形状约定（单步向量，不是序列矩阵）</strong>：公式里带下标 <math dir="ltr" data-am-tex="$t$"><mi>t</mi></math> 的 <math dir="ltr" data-am-tex="$q_t,k_t,v_t$"><mrow><msub><mi>q</mi><mi>t</mi></msub><mo separator="true">,</mo><msub><mi>k</mi><mi>t</mi></msub><mo separator="true">,</mo><msub><mi>v</mi><mi>t</mi></msub></mrow></math> 一律是<strong>当前 token 的一个向量</strong>，不是整段序列的 <math dir="ltr" data-am-tex="$[n,d]$"><mrow><mo fence="true" form="prefix" stretchy="false">[</mo><mi>n</mi><mo separator="true">,</mo><mi>d</mi><mo fence="true" form="postfix" stretchy="false">]</mo></mrow></math> 矩阵。</p>
+<ul>
+<li><math dir="ltr" data-am-tex="$k_t\in\mathbb{R}^{d_k}$"><mrow><msub><mi>k</mi><mi>t</mi></msub><mo>∈</mo><msup><mi>ℝ</mi><msub><mi>d</mi><mi>k</mi></msub></msup></mrow></math>（或记成 <code>[d_k]</code>）</li>
+<li><math dir="ltr" data-am-tex="$v_t\in\mathbb{R}^{d_v}$"><mrow><msub><mi>v</mi><mi>t</mi></msub><mo>∈</mo><msup><mi>ℝ</mi><msub><mi>d</mi><mi>v</mi></msub></msup></mrow></math>（或记成 <code>[d_v]</code>）</li>
+<li><math dir="ltr" data-am-tex="$q_t\in\mathbb{R}^{d_k}$"><mrow><msub><mi>q</mi><mi>t</mi></msub><mo>∈</mo><msup><mi>ℝ</mi><msub><mi>d</mi><mi>k</mi></msub></msup></mrow></math>（与 key 同空间，才能做 <math dir="ltr" data-am-tex="$S q_t$"><mrow><mi>S</mi><msub><mi>q</mi><mi>t</mi></msub></mrow></math>）</li>
+<li><math dir="ltr" data-am-tex="$S_t\in\mathbb{R}^{d_v\times d_k}$"><mrow><msub><mi>S</mi><mi>t</mi></msub><mo>∈</mo><msup><mi>ℝ</mi><mrow><msub><mi>d</mi><mi>v</mi></msub><mo>×</mo><msub><mi>d</mi><mi>k</mi></msub></mrow></msup></mrow></math>，<math dir="ltr" data-am-tex="$o_t=S_t q_t\in\mathbb{R}^{d_v}$"><mrow><msub><mi>o</mi><mi>t</mi></msub><mo>=</mo><msub><mi>S</mi><mi>t</mi></msub><msub><mi>q</mi><mi>t</mi></msub><mo>∈</mo><msup><mi>ℝ</mi><msub><mi>d</mi><mi>v</mi></msub></msup></mrow></math></li>
+</ul>
+<p>因此本篇的读写写成：</p>
+<ul>
+<li><strong>写入</strong>：<math dir="ltr" data-am-tex="$S\leftarrow S+v_t k_t^\top$"><mrow><mi>S</mi><mo>←</mo><mi>S</mi><mo>+</mo><msub><mi>v</mi><mi>t</mi></msub><msubsup><mi>k</mi><mi>t</mi><mi>⊤</mi></msubsup></mrow></math>（外积，形状 <code>[d_v, d_k]</code>；代码里常写 <code>torch.outer(v_t, k_t)</code> 或 <code>v_t[:, None] @ k_t[None, :]</code>）</li>
+<li><strong>读取</strong>：<math dir="ltr" data-am-tex="$o_t=S_t q_t$"><mrow><msub><mi>o</mi><mi>t</mi></msub><mo>=</mo><msub><mi>S</mi><mi>t</mi></msub><msub><mi>q</mi><mi>t</mi></msub></mrow></math>（代码里 <code>S @ q_t</code>）</li>
+<li><strong>Delta 里先读旧答案</strong>：<math dir="ltr" data-am-tex="$\hat v_t=S_{t-1}k_t$"><mrow><msub><mi>v</mi><mi>t</mi><mo>^</mo></msub><mo>=</mo><msub><mi>S</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><msub><mi>k</mi><mi>t</mi></msub></mrow></math>（同样是 <code>S @ k_t</code>）</li>
+</ul>
+<p>若把整段序列一次堆起来，才会出现矩阵形式 <math dir="ltr" data-am-tex="$K\in\mathbb{R}^{n\times d_k},\;V\in\mathbb{R}^{n\times d_v},\;Q\in\mathbb{R}^{n\times d_k}$"><mrow><mi>K</mi><mo>∈</mo><msup><mi>ℝ</mi><mrow><mi>n</mi><mo>×</mo><msub><mi>d</mi><mi>k</mi></msub></mrow></msup><mo separator="true">,</mo><mi>V</mi><mo>∈</mo><msup><mi>ℝ</mi><mrow><mi>n</mi><mo>×</mo><msub><mi>d</mi><mi>v</mi></msub></mrow></msup><mo separator="true">,</mo><mi>Q</mi><mo>∈</mo><msup><mi>ℝ</mi><mrow><mi>n</mi><mo>×</mo><msub><mi>d</mi><mi>k</mi></msub></mrow></msup></mrow></math>。本篇主线是「边走边维护状态」，<math dir="ltr" data-am-tex="$n$"><mi>n</mi></math> 被消进递推里，所以默认不写 <code>[n, d]</code>。</p>
+<p><strong>和「另一种约定」的对照</strong>（只换纸的朝向，模型不变）：</p>
+<div class="am-table-wrap"><table>
+<thead>
+<tr><th>本篇约定 A</th><th>常见约定 B</th></tr>
+</thead>
+<tbody>
+<tr><td><math dir="ltr" data-am-tex="$S:d_v\times d_k$"><mrow><mi>S</mi><mo>:</mo><msub><mi>d</mi><mi>v</mi></msub><mo>×</mo><msub><mi>d</mi><mi>k</mi></msub></mrow></math></td><td><math dir="ltr" data-am-tex="$S:d_k\times d_v$"><mrow><mi>S</mi><mo>:</mo><msub><mi>d</mi><mi>k</mi></msub><mo>×</mo><msub><mi>d</mi><mi>v</mi></msub></mrow></math></td></tr>
+<tr><td>写入 <math dir="ltr" data-am-tex="$S+=v\,k^\top$"><mrow><mi>S</mi><mo>+=</mo><mi>v</mi><msup><mi>k</mi><mi>⊤</mi></msup></mrow></math></td><td>写入 <math dir="ltr" data-am-tex="$S+=k\,v^\top$"><mrow><mi>S</mi><mo>+=</mo><mi>k</mi><msup><mi>v</mi><mi>⊤</mi></msup></mrow></math></td></tr>
+<tr><td>读取 <math dir="ltr" data-am-tex="$o=Sq$"><mrow><mi>o</mi><mo>=</mo><mi>S</mi><mi>q</mi></mrow></math></td><td>读取 <math dir="ltr" data-am-tex="$o=q^\top S$"><mrow><mi>o</mi><mo>=</mo><msup><mi>q</mi><mi>⊤</mi></msup><mi>S</mi></mrow></math></td></tr>
+<tr><td>Delta 预测 <math dir="ltr" data-am-tex="$Sk$"><mrow><mi>S</mi><mi>k</mi></mrow></math></td><td>Delta 预测 <math dir="ltr" data-am-tex="$k^\top S$"><mrow><msup><mi>k</mi><mi>⊤</mi></msup><mi>S</mi></mrow></math></td></tr>
+</tbody>
+</table></div>
+<p>选约定 A 是为了和后面 DeltaNet / Gated DeltaNet 的代码接口一致：左边乘向量就直接落在 value 空间，梯度 <math dir="ltr" data-am-tex="$\nabla_S\mathcal{L}=(Sk-v)k^\top$"><mrow><msub><mo>∇</mo><mi>S</mi></msub><mi>L</mi><mo>=</mo><mrow><mo fence="true" form="prefix" stretchy="false">(</mo><mi>S</mi><mi>k</mi><mo>−</mo><mi>v</mi><mo fence="true" form="postfix" stretchy="false">)</mo></mrow><msup><mi>k</mi><mi>⊤</mi></msup></mrow></math> 也更干净。</p>
 </blockquote>
 <p>到这里，&quot;记忆&quot;这个词终于有了具体所指：一个矩阵，就是一个从 key 方向到 value 的线性映射。这句话要记住，因为它同时是这一派的全部力量，也是全部病根 —— 线性映射能做的事，和查表能做的事，不是一回事。伏笔在 §3.3 兑现。</p>
 <p>于是剩下的全部问题被压成一句话：<strong>当新记录到来时，你怎么把它合并进这个矩阵？</strong></p>
