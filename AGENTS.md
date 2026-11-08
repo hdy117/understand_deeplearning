@@ -1,5 +1,44 @@
 # AGENTS.md — understand_deeplearning 工作区记忆
 
+## 2026-11-08 会话：sequence v5 教学重构
+
+### 完成的工作
+
+| 源文件 | 产出 | 说明 |
+|---|---|---|
+| sequence_models_evolution_v4.md（重构） | sequence_models_evolution_v5.md → sequence_v5_am_draft.md → sequence_models_evolution_v5.html | **教学重构**：每章重排成参照 `RNN的记忆、序列、时间与状态.md` 的「六拍」模板；v4 技术内容一字未删 |
+
+### v5 的六拍模板（每章固定节拍）
+
+1. 一句话 + 一个式子（boxed 核心循环，先说干什么）
+2. 同一道题走一遍（§0.1 的 A/B 题逐步手算，第一步/第二步/第三步）
+3. 对在哪，错在哪（每个错读数指认一条机制）
+4. 机制细看（推导、账单、边界都在这里，不再开章就跳抽象框架）
+5. 一个类比（RNN 传话游戏 / LSTM 一排账户 / Transformer 档案馆 / Linear Attn 只会加法的会计 / DeltaNet 拿到橡皮的会计 / Gated 碎纸机 / Hybrid 图书馆+笔记本）
+6. 本章小结（编号列表 + 一句话收尾，明确「修好了上一章什么病、留下什么病给下一章」）
+
+- 章首新增「本章接口」引用块，焊上章间接缝（治"太跳跃"）。
+- 新增「怎么读这本书」节，把六拍模板明说给读者。
+- §3.2/§7.2 给 Transformer/Hybrid 也补了同一道题的走读（v4 里这两章没有逐步走账）。
+- 交叉引用全部重编号，已用脚本体检无悬空（§4.5 串味 / §4.6 上界 / §5.7 并行账单 / §7.5 怎么选）。
+
+### 管线新经验
+
+- 转换脚本现存 `build_am_draft_v5.py`（v4 及更早脚本已不在目录里）。
+- mermaid → flow 的正则两个坑：虚线箭头是 `-.->`（正则要写 `-\.->`）；节点文本可含 `_{...}` LaTeX（方括号节点文本字符类用 `[^"\]]`，菱形用 `[^"\}]`，分开匹配）。
+- am render 在有 STE 警告时不会自动打开页面，需 `--replace <同一 html>` 覆盖（会删除旧页重写）。
+- 验证 HTML：Edge 无头截图 `"/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" --headless --screenshot=... --window-size=1400,3200 file:///...`。
+
+### 待办/可能的后续
+
+- v4 的 HTML 仍保留未动；若 v5 取代 v4，考虑是否归档 v4 三件套。
+- 三份 HTML 之间尚未互加跳转链接（已提议，等 David 确认）。
+- deltanet 教程的 md 源里有指向 tensor 指南的相对链接，HTML 版目前是纯文本路径。
+
+---
+
+（以下为 2026-11-07 会话记录，管线细节已被上面的 v5 条目更新）
+
 ## 所有者偏好（David）
 
 - 称呼 David，教育/科研工作者，助手名 Ember。
