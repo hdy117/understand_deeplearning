@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>序列模型的记忆：从 RNN 到 Hybrid DeltaNet · Ember 重写版</title>
+<script>
+mathjax = {tex: {inlineMath: [['$','$'],['\\(','\\)']], displayMath: [['$$','$$'],['\\[','\\]']]}};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f2ea; --paper: #fdfbf6; --ink: #1f1c17; --muted: #57514a;
+    --line: #cbc3b4; --accent: #8c2f1e; --fill: #f3eee4; --ok: #2e6a3b; --warn: #7f5300;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Iowan Old Style", Palatino, "Songti SC", "Noto Serif CJK SC", Georgia, serif;
+    line-height: 1.75; font-size: 17px;
+  }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 40px 22px 80px; }
+  h1 { font-size: 1.85rem; line-height: 1.25; margin: 0 0 8px; letter-spacing: -0.01em; }
+  h2 { font-size: 1.45rem; margin: 2.4em 0 0.6em; border-bottom: 2px solid var(--ink); padding-bottom: 6px; }
+  h3 { font-size: 1.18rem; margin: 1.8em 0 0.5em; color: var(--accent); }
+  h4 { font-size: 1.05rem; margin: 1.4em 0 0.4em; }
+  p, li { color: var(--ink); }
+  .sub { color: var(--muted); margin: 0 0 1.2em; }
+  .lead { font-size: 1.05rem; background: var(--paper); border: 1px solid var(--line); padding: 14px 16px; border-radius: 4px; }
+  blockquote {
+    margin: 1em 0; padding: 10px 16px; border-left: 4px solid var(--accent);
+    background: #f5e5df; color: var(--ink);
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.95rem; margin: 1em 0; background: var(--paper); }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; vertical-align: top; text-align: left; }
+  th { background: var(--fill); font-weight: 600; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+  pre {
+    background: #1c1a15; color: #ebe5d8; padding: 14px 16px; overflow-x: auto;
+    border-radius: 4px; font-size: 0.88rem; line-height: 1.55;
+  }
+  .mermaid { background: var(--paper); border: 1px solid var(--line); padding: 12px; margin: 1.2em 0; border-radius: 4px; overflow-x: auto; }
+  .card {
+    background: var(--paper); border: 1px solid var(--line); padding: 14px 16px; margin: 1em 0; border-radius: 4px;
+  }
+  .tag { display: inline-block; font-size: 0.78rem; border: 1px solid var(--accent); color: var(--accent);
+    padding: 1px 8px; border-radius: 999px; margin-right: 4px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc li { margin: 4px 0; }
+  .foot { margin-top: 3em; color: var(--muted); font-size: 0.9rem; }
+  mjx-container { overflow-x: auto; overflow-y: hidden; max-width: 100%; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="mono" style="color:var(--muted);font-size:0.85rem;">Ember rewrite · 2026-11-09 · visual-first · 留住·改口·隔离·定容</p>
+<h1>序列模型的记忆：从 RNN 到 Hybrid DeltaNet</h1>
+<p class="sub">同一道「记账题」贯穿七代模型 · 少压缩、多搭桥 · 给视觉学习者的一版</p>
+
+<div class="lead">
+<p>嗨，我是 <strong>Ember</strong>。这篇不是「术语速通」，而是把序列模型当成<strong>一本会更新的账本</strong>来讲：它怎么写、怎么读、为什么会串味、为什么有时改不了口。</p>
+<p>全程只做一件事——用同一道题（写 A、写 B、改 A、隔很久再问）去拷打每一代架构。你会看到：很多「聪明结构」其实是在修上一代账本的具体失败，而不是从天上掉下来的新物种。</p>
+</div>
+
+<h2>目录</h2>
+<ol class="toc">
+  <li><a href="#ch0">0. 先把题目出出来</a></li>
+  <li><a href="#ch1">1. RNN：没有页码的账本</a></li>
+  <li><a href="#ch2">2. LSTM：直通线 + 三道闸门</a></li>
+  <li><a href="#ch3">3. Transformer：拒绝合并</a></li>
+  <li><a href="#ch4">4. Linear Attention：把求和挪到 query 前面</a></li>
+  <li><a href="#ch5">5. DeltaNet：写之前先读一眼</a></li>
+  <li><a href="#ch6">6. Gated DeltaNet：给每一行一个半衰期</a></li>
+  <li><a href="#ch7">7. Hybrid：两种记忆分层共存</a></li>
+  <li><a href="#ch8">8. 收束：同一台状态机，七个读数</a></li>
+</ol>
+
+<!-- ========== 0 ========== -->
+<h2 id="ch0">0. 先把题目出出来</h2>
+
+<h3>0.1 一道题，四条验收</h3>
+<p>先把「语言」这层皮剥掉。驱动架构演化的，经常不是「语义有多深」，而是一件更无聊、更硬的事：<strong>记账准不准</strong>。</p>
+
+<pre>t = 1     write (A, 1)
+t = 2     write (B, 5)
+t = 3     write (A, 3)     ← A changed its mind
+t = 4..91 eighty-eight distractors
+t = 92    query: what is A? what is B?
+correct:  A = 3, B = 5</pre>
+
+<p>文献里这类任务叫 <strong>associative recall</strong>。它不考语法，不考常识，只考：你的状态里有没有一本不乱的簿子。</p>
+
+<p>把这道题拆成四条验收标准——后面全文只用这四个词，好记：</p>
+
+<table>
+<thead>
+<tr><th>标记</th><th>要求</th><th>一句话检验</th><th>怎么记</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>留住</strong></td><td>长记性：旧记录别被时间冲掉</td><td>第 1 步写的，第 92 步还在</td><td>留得住才叫记忆</td></tr>
+<tr><td><strong>改口</strong></td><td>可覆盖：同一 key 写新值，读出来是新的</td><td>A 改成 3 后，读到 3，不是 1 和 3 的混合物</td><td>能改口，不是只会追加</td></tr>
+<tr><td><strong>隔离</strong></td><td>不串扰：改 A 不动 B</td><td>改 A 时，B 仍是 5</td><td>各记各的，互不串味</td></tr>
+<tr><td><strong>定容</strong></td><td>状态大小与序列长度无关</td><td>N 从 4K 到 128K，状态形状不变</td><td>定住容量，不随 N 膨胀</td></tr>
+</tbody>
+</table>
+
+<p><strong>定容</strong>说的是「状态大小」，不是「时间」。串行带来的延迟往往比状态膨胀更早杀死一个架构——这一点后面账单里会反复出现。</p>
+
+<div class="mermaid">
+flowchart LR
+  A[Write A=1] --> B[Write B=5]
+  B --> C[Rewrite A=3]
+  C --> D[88 distractors]
+  D --> Q{Query A and B}
+  Q -->|pass| OK[A=3, B=5]
+  Q -->|fail| BAD[mixed / lost / crosstalk]
+</div>
+
+<h3>0.2 唯一的骨架：write / read</h3>
+<p>不管外面叫 RNN、Attention 还是 DeltaNet，一步序列计算都可以压成一对动作：</p>
+
+$$
+S_t = \mathrm{write}(S_{t-1}, x_t), \qquad o_t = \mathrm{read}(S_t, q_t)
+$$
+
+<table>
+<thead><tr><th>符号</th><th>含义</th></tr></thead>
+<tbody>
+<tr><td>$S_t$</td><td>写完第 $t$ 步之后的全部记忆（形状决定流派）</td></tr>
+<tr><td>$x_t$</td><td>当前输入 token</td></tr>
+<tr><td>$k_t, v_t$</td><td>用来<strong>写</strong>账本的地址与内容（由 $x_t$ 投影）</td></tr>
+<tr><td>$q_t$</td><td>用来<strong>读</strong>账本的提问（由 $x_t$ 另一组投影）</td></tr>
+<tr><td>$o_t$</td><td>读出的结果，交给下一层</td></tr>
+</tbody>
+</table>
+
+<p>$k_t$ 和 $q_t$ 是同一个 token 的两个不同投影：一份拿去写，一份拿去查。这就是 Q/K/V 三件套的由来——不是神秘仪式，是「写地址」和「读问题」需要两套坐标系。</p>
+
+<div class="mermaid">
+flowchart TB
+  xt[x_t] --> write
+  write --> St[state S_t]
+  St --> read
+  qt[q_t] --> read
+  read --> ot[o_t]
+  St -.->|carry to next step| write
+</div>
+
+<p>后面七章改的几乎全是 <code>write</code> 框和 $S$ 的形状；<code>read</code> 那半条变动小得多。所以你可以带着一个心智模型往下走：</p>
+<blockquote><strong>序列模型 = 一台状态机 + 一条写规则 + 一条读规则。</strong></blockquote>
+
+<h3>0.3 也可以叫：对记忆的增删改查</h3>
+<p>若你更熟软件工程，可以用另一张地图来记同一套东西：序列模型对状态 $S$ 做的事，意图上就是 <strong>增 / 删 / 改 / 查</strong>。四条验收问的是——这四件事干不干净、贵不贵。</p>
+
+<table>
+<thead>
+<tr><th>增删改查</th><th>在记忆里是什么</th><th>典型动作</th><th>主要碰到的验收</th></tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>增 Create</strong></td>
+<td>新 key 第一次写入</td>
+<td>$S\leftarrow S+v k^\top$，或表里追加一行 $(k,v)$</td>
+<td><strong>定容</strong>（还能不能继续增）</td>
+</tr>
+<tr>
+<td><strong>查 Read</strong></td>
+<td>用 $q$ 取出内容</td>
+<td>$o=Sq$，或 attention 加权和</td>
+<td>查得准不准（和改口、隔离绑定）</td>
+</tr>
+<tr>
+<td><strong>改 Update</strong></td>
+<td>同一 key 换成新值</td>
+<td>先读再写差额：$\beta(v-Sk)k^\top$</td>
+<td><strong>改口</strong></td>
+</tr>
+<tr>
+<td><strong>删 Delete</strong></td>
+<td>让旧内容失效或腾位</td>
+<td>乘 $\gamma$、沿 $k$ 擦、截断、被覆盖</td>
+<td><strong>留住</strong> vs 过期；乱删伤<strong>隔离</strong></td>
+</tr>
+</tbody>
+</table>
+
+<div class="mermaid">
+flowchart TB
+  xt[x_t] --> write[write rule]
+  write --> crud["Create / Update / Delete mixed in one step"]
+  crud --> S[state S]
+  qt[q_t] --> read[read = Query]
+  S --> read
+  read --> ot[o_t]
+</div>
+
+<p><strong>和数据库 CRUD 同构的是意图，不是实现。</strong> 差异值得提前钉死，否则后面会误判：</p>
+<ol>
+<li><strong>经常没有干净主键</strong>：数据库是 <code>WHERE id=A</code>；RNN 没有 id；DeltaNet 用 $k$ 当软地址，不正交就会「改 A 碰到 B」。</li>
+<li><strong>删很少是 DELETE FROM</strong>：更多是乘 $\gamma$、投影擦除、softmax 权重变小、KV 截断——连续、可逆、易误伤。</li>
+<li><strong>改经常不是 in-place 赋值</strong>：Linear Attention 的「改」其实是再增一次；DeltaNet 的「改」才接近真正的 <code>UPDATE</code>（先查旧值，再写差额）。</li>
+<li><strong>定容 = 存储引擎约束</strong>：像固定内存的嵌入式 DB——增到一定程度必须合并、覆盖或分层，不能无限加磁盘。</li>
+</ol>
+
+<p>用增删改查重述四条验收（互补视角，不是换一套标准）：</p>
+<ul>
+<li><strong>留住</strong>：增进去的，过很久还能查到（不被误删、误衰减）。</li>
+<li><strong>改口</strong>：对同一 key 做改之后，查到的是新值，不是新旧混合物。</li>
+<li><strong>隔离</strong>：改/删 A 时，B 的查不变。</li>
+<li><strong>定容</strong>：增再多条，状态体积也不跟 $N$ 线性涨。</li>
+</ul>
+
+<p>骨架上的对应很直接：</p>
+<ul>
+<li><code>read</code> ≈ <strong>查</strong></li>
+<li><code>write</code> 里常常<strong>同时</strong>含增、改、删——所以才会「改 A 时误伤 B」。数据库里四条 API 是分开的；序列模型里常缠在一次更新里。这是整条演化史别扭感的来源之一。</li>
+</ul>
+
+<blockquote>
+序列模型 = 一台对状态 $S$ 做增删改查的引擎；架构演化 = 在「查得准、改得净、别误删、还别让存储爆炸」之间换引擎实现。
+</blockquote>
+
+<p>下面仍用 write/read 与公式推进（和论文对齐）；你随时可以用「这是增还是改、删干净了吗」把式子翻译回增删改查。</p>
+
+<h3>0.4 全篇唯一值得亲手推的一步</h3>
+<p>标准 attention 的加权和，可以换成「先合成矩阵、再乘 query」：</p>
+
+$$
+o = \sum_i (q^\top k_i)\, v_i = \Big(\sum_i v_i k_i^\top\Big) q = S q
+$$
+
+<p>左边是「每个 key 打一次分，再加权 value」；右边是「先把所有 $v k^\top$ 累成一张表 $S$，query 来了只做一次矩阵乘」。形状对得上：$v_i k_i^\top$ 是 $[d_v, d_k]$，乘上 $[d_k]$ 得到 $[d_v]$。</p>
+
+<p>这一步交换是整条演化史能存在的原因：从「每次读都扫全表」变成「边写边维护一张表」。没有它，后面所有 $O(N)$ 的线性注意力家族都无从谈起。</p>
+
+<p><strong>方向约定（全文唯一，后面不再改）</strong>：</p>
+<ul>
+<li>$S \in \mathbb{R}^{d_v \times d_k}$：行 = value 通道，列 = key 方向</li>
+<li><strong>写入</strong>：$S \leftarrow S + v_t k_t^\top$（代码：<code>outer(v, k)</code>）</li>
+<li><strong>读取</strong>：$o_t = S_t q_t$（代码：<code>S @ q</code>）</li>
+<li>$q_t, k_t, v_t$ 是<strong>单步向量</strong>$[d_k]/[d_v]$，不是整段序列的 $[n,d]$ 矩阵；把 $n$ 个向量叠起来才会出现 $Q,K,V$ 矩阵形式</li>
+</ul>
+
+<p>有的资料写成 $S=\sum k v^\top$ 再配 $q^\top S$，与本文互为转置、数学等价。混着读会以为作者换了模型——其实只是换了纸的朝向。本文选「value 在左、key 在右」，是为了和 DeltaNet 的代码与梯度形式一致。</p>
+
+<div class="card">
+<strong>约定 A（本文）</strong> vs <strong>约定 B（常见）</strong><br>
+$S: d_v\times d_k$，写 $v k^\top$，读 $Sq$　｜　$S: d_k\times d_v$，写 $k v^\top$，读 $q^\top S$
+</div>
+
+<h3>0.5 四种记账方式（全文路线图）</h3>
+<p>骨架问题问到底——「新记录怎么并进记忆？」——答案空间很小：要么<strong>不合并</strong>，要么压进固定大小矩阵。压缩的笔法本质上三种：<strong>累加、纠错、衰减+纠错</strong>。</p>
+
+<table>
+<thead>
+<tr><th>方式</th><th>直觉</th><th>更新式</th><th>满足</th><th>牺牲</th><th>代表</th></tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>不合并</strong></td>
+<td>账本越写越长，读时现场比分</td>
+<td>只追加</td>
+<td>留住·改口·隔离</td>
+<td>定容（$O(N^2)$）</td>
+<td>Transformer</td>
+</tr>
+<tr>
+<td><strong>累加</strong></td>
+<td>每条盖一层地毯，旧的不擦</td>
+<td>$S\leftarrow S+vk^\top$</td>
+<td>定容·留住</td>
+<td>改口·隔离</td>
+<td>Linear Attention</td>
+</tr>
+<tr>
+<td><strong>纠错</strong></td>
+<td>先读旧答案，只写差额</td>
+<td>$S\leftarrow S+\beta(v-Sk)k^\top$</td>
+<td>定容·留住·改口</td>
+<td>隔离（部分）</td>
+<td>DeltaNet</td>
+</tr>
+<tr>
+<td><strong>衰减+纠错</strong></td>
+<td>先按行过期，再纠错</td>
+<td>先 $\gamma\odot S$，再纠错</td>
+<td>定容·留住·改口</td>
+<td>隔离尾巴·误伤</td>
+<td>Gated DeltaNet</td>
+</tr>
+</tbody>
+</table>
+
+<p>推进主线可以记成一句话：</p>
+<blockquote>先拿回<strong>定容</strong>（累加）→ 再拿回<strong>改口</strong>（纠错）→ 再处理过期与<strong>隔离</strong>（衰减 / Hybrid）。</blockquote>
+
+<p><strong>RNN / LSTM 为什么不在表里？</strong> 它们没有 $k$，也就没有「往哪个地址写」。写入是整份状态被稠密矩阵搅拌后灌回去——不是「压得不够狠」，是「没有页码」。第 1、2 章专门解剖这种无地址失败。</p>
+
+<div class="mermaid">
+flowchart LR
+  RNN[RNN no address] --> LSTM[LSTM highway]
+  LSTM --> TF[Transformer no merge]
+  TF --> LA[Linear Attention add]
+  LA --> DN[DeltaNet correct]
+  DN --> GDN[Gated DeltaNet decay]
+  GDN --> HY[Hybrid layered]
+</div>
+
+<h3>0.6 「忘」不是独立旋钮</h3>
+<p>常有人把模型拆成「怎么存、怎么读、怎么忘」三件套。读起来整齐，但埋了个陷阱：</p>
+<blockquote><strong>忘从来不是独立旋钮，它是写规则的副产品。</strong></blockquote>
+
+<p><strong>直觉</strong>：记忆只有一份。想让旧内容活，就得写的时候少动它；想让它消失，还是得写的时候多动它。你无法「精确只改 A，又顺便单独抹掉 B」，除非写规则里本来就带着动 B 的动作。</p>
+
+<p><strong>四种笔法里的「忘」</strong>：</p>
+<ul>
+<li><strong>不合并</strong>：行还在；「忘」只是读时权重变小。真腾地方靠截断/滑窗，是工程策略，不是写规则内部旋钮。</li>
+<li><strong>累加</strong>：没有擦，只有叠。要压旧信息只能整体乘 &lt;1，A 和 B 一起淡——分不清该忘谁。</li>
+<li><strong>纠错</strong>：沿 $k$ 方向覆盖，像局部用橡皮；正交方向几乎不动。能改口，但不会按时间过期。</li>
+<li><strong>衰减+纠错</strong>：$\gamma$ 最像「忘的旋钮」，但它仍是写步骤里的乘法，作用在整行上，不是点名删除第 $i$ 条。学歪了会<strong>误伤</strong>。</li>
+</ul>
+
+<p>所以：先谈写，再谈忘——用增删改查的话说：先谈「改/增发生时动了谁」，再谈「删是副产品还是显式过期」。后面 §6 的 $\gamma$，是把「写的时候顺便乘一个小于 1 的系数」显式参数化，不是天上掉下来的独立 DELETE 开关。</p>
+
+<!-- ========== 1 ========== -->
+<h2 id="ch1">1. RNN：一页没有页码的账本</h2>
+
+<p><span class="tag">无地址</span><span class="tag">定长向量状态</span></p>
+
+<h3>1.1 一句话 + 一个式子</h3>
+<p>RNN 每一步都在做同一件事：把旧状态和当前输入搅在一起，搅出新状态。</p>
+
+$$
+h_t = \tanh\big(W_x x_t + W_h h_{t-1} + b\big)
+$$
+
+<p>对照骨架：$S_t$ 就是 $h_t$，整份记忆只有一个 $[d]$ 向量。所有历史都得挤进同一条窄带。$W_x$ 是新输入入口，$W_h$ 是旧状态通道，$\tanh$ 把值压回 $(-1,1)$。</p>
+
+<p><strong>渊源</strong>：固定窗口 MLP 把「能看多远」写成超参数 $k$；RNN 用递推向量承接任意长度——壮举与病根同时诞生。</p>
+
+<div class="mermaid">
+flowchart LR
+  h0[h_{t-1}] --> mix[W_h and W_x mix]
+  xt[x_t] --> mix
+  mix --> tanh --> ht[h_t]
+</div>
+
+<h3>1.2 同一道题怎么算（示意）</h3>
+<p>假设二维状态，A 走第 1 维，B 走第 2 维（现实中 $W_h$ 会把维搅乱，这里只为看清失败模式）：</p>
+<pre>t=1  write A=1  →  h ≈ [1, 0]
+t=2  write B=5  →  h ≈ [0.5, 5]     # A already decayed by W_h / tanh
+t=3  rewrite A=3 → h ≈ [3.25, 2.5]  # old A residue + B collateral damage
+t=92 query       → neither A nor B is clean</pre>
+
+<p>两个数字全错，而且错法相反：A 是「新旧叠在一起」，B 是「被顺手砍了一刀」——分别对上<strong>改口</strong>失败和<strong>隔离</strong>失败。</p>
+
+<h3>1.3 机制：连「记得久」也做不到</h3>
+<p>反传时，对 $h_{t-k}$ 的梯度要穿过一长串：</p>
+
+$$
+\frac{\partial h_t}{\partial h_{t-k}} = \prod_{j=0}^{k-1} \mathrm{diag}(1-\tanh^2(a_{t-j}))\, W_h
+$$
+
+<p>每一步乘一次 $W_h$ 和一次 $\tanh'$。$|W_h|$ 的特征值稍离 1，连乘就指数爆炸或消失；$\tanh'$ 在饱和区接近 0，再补一刀。所以<strong>留住</strong>也经常靠运气。</p>
+
+<p><strong>用矩阵语言说「没有地址」</strong>：$W_h h_{t-1}$ 意味着旧状态每个坐标都按 $W_h$ 的列配方被重新混一遍——mixing 是稠密的，没有任何一列能被单独豁免。翻译成人话：你改某一条记录时，不可避免地碰所有坐标。</p>
+
+<h3>1.4 类比</h3>
+<p>传话游戏常被用来类比 RNN，但失败原因常被说错。真正的问题不只是「每传一次丢一点」，而是<strong>每次传话都会把上一句和这一句搅拌成一句新的</strong>——你没有「只改第 3 个词、其他原样」的手术刀。</p>
+
+<div class="card">
+<strong>本章小结</strong>：RNN 四条验收基本全挂——无地址写入导致改口与隔离同时失败，梯度连乘威胁留住，唯一勉强的是状态定容（一个向量）。下一章 LSTM 只打算先还「留住」这笔债。
+</div>
+
+<!-- ========== 2 ========== -->
+<h2 id="ch2">2. LSTM：一条直通线，三道闸门</h2>
+
+<p><span class="tag">cell highway</span><span class="tag">仍无 key 地址</span></p>
+
+<h3>2.1 一句话 + 一个式子</h3>
+$$
+c_t = f_t \odot c_{t-1} + i_t \odot \tilde{c}_t, \qquad h_t = o_t \odot \tanh(c_t)
+$$
+
+<p>$c_t$ 是 cell state：一条尽量少非线性的「高速公路」。$f_t, i_t, o_t$ 是遗忘门、输入门、输出门，逐元素控制「旧的留多少、新的进多少、对外读多少」。</p>
+
+<p><strong>思想</strong>：不让信息「被传递时反复变换」，让它「自己走过去」。梯度沿 $c$ 走时主要乘门值：</p>
+
+$$
+\frac{\partial c_t}{\partial c_{t-k}} = \prod_{i=t-k+1}^{t} \mathrm{diag}(f_i)
+$$
+
+<p>若 $f\approx 1$，乘积接近 1，长程梯度能活——这是 LSTM 相对 RNN 的真正杀手锏。</p>
+
+<div class="mermaid">
+flowchart TB
+  cprev[c_{t-1}] --> fgate[f_t forget]
+  fgate --> add
+  xt[x_t, h_{t-1}] --> igate[i_t and candidate]
+  igate --> add
+  add --> cnew[c_t]
+  cnew --> ogate[o_t and tanh]
+  ogate --> h[h_t]
+</div>
+
+<h3>2.2 同一道题</h3>
+<p>理想门控下：写 A 时只开 A 相关维；写 B 时只开 B 维；改 A 时对 A 维 $f\to 0$（清旧）、$i\to 1$（写新），B 维 $f\to 1$（原样保留）。看起来<strong>改口</strong>和<strong>隔离</strong>都有救。</p>
+<p>但现实是：门是学出来的，没有显式 key 告诉它「这是地址 A」。维与符号的对齐全靠训练撞大运。短合成任务可以学得很好；开放端语言里，地址对齐并不免费。</p>
+
+<h3>2.3 账单：串行</h3>
+<p>LSTM 修了「留得住」的梯度路径，但每一步仍依赖上一步的 $c_{t-1}$——训练与推理都是时间串行。状态虽定容，<strong>时间成本</strong>随 N 线性涨，且难以像 attention 那样整段并行。</p>
+
+<div class="card">
+<strong>本章小结</strong>：LSTM 用 highway 部分赎回<strong>留住</strong>；门提供了弱形式的改口/隔离，但无显式地址。<strong>定容</strong>仍在，串行账单留给后人。下一章 Transformer 选择另一极端：拒绝合并。
+</div>
+
+<!-- ========== 3 ========== -->
+<h2 id="ch3">3. Transformer：拒绝合并</h2>
+
+<p><span class="tag">不合并</span><span class="tag">精确但昂贵</span></p>
+
+<h3>3.1 一句话 + 一个式子</h3>
+$$
+o_t = \sum_{i\le t} \frac{\exp(q_t^\top k_i/\sqrt{d_k})}{\sum_{j\le t}\exp(q_t^\top k_j/\sqrt{d_k})}\, v_i
+$$
+
+<p>$S_t$ 在这里不是固定矩阵，而是一张<strong>越写越长的表</strong> $(k_1,v_1),\ldots,(k_t,v_t)$。每条记录原样躺着；$q_t$ 来了再现场打分、归一化、加权求和。</p>
+
+<p><strong>思想</strong>：合并会丢信息，那就不合并。用空间和计算换<strong>留住·改口·隔离</strong>。</p>
+
+<div class="mermaid">
+flowchart LR
+  table[(KV table grows with N)] --> scores[scores q vs all k]
+  scores --> sm[softmax]
+  sm --> mix[weighted sum of v]
+  mix --> o[o_t]
+</div>
+
+<h3>3.2 同一道题</h3>
+<p>写 (A,1)、(B,5)、(A,3) 后，表里三条记录都在。问 A 时，与两条 A 的 key 都可能高分，但若位置/内容编码让「最近的 A=3」胜出，读数就是 3；B 的行原封不动。三条验收里的前三条可以同时满足——代价是表长度 = N。</p>
+
+<h3>3.3 为什么是 softmax</h3>
+<p>softmax 做两件事：（1）把打分变成正权重并归一化；（2）制造「赢者多吃」的竞争。没有归一化，量纲乱飘；没有竞争，改口时新旧 key 容易平分秋色，读成混合物。</p>
+<p>它也埋下伏笔：softmax 让 $\sum_i f(q,k_i)v_i$ <strong>不能</strong>随便把求和交换进与 $q$ 无关的括号里——结合律在这里断了。这是下一章 Linear Attention 要拆的墙。</p>
+
+<h3>3.4 并行与 mask</h3>
+<p>训练时整段序列可并行算 attention（配 causal mask 防止看到未来）。这是对 LSTM 串行的正面反击。<strong>推理</strong>时则用 KV cache 避免重复算历史——账单变成「每层存 $2N d$ 的 K/V」，长上下文下显存与带宽压力巨大。</p>
+
+<div class="card">
+<strong>本章小结</strong>：Transformer 用「不合并」买下留住·改口·隔离，卖掉定容与 $O(N^2)$。下一章问：能不能在近似意义下合并，把定容赎回？
+</div>
+
+<!-- ========== 4 ========== -->
+<h2 id="ch4">4. Linear Attention：把求和挪到 query 前面</h2>
+
+<p><span class="tag">累加笔法</span><span class="tag">定容赎回</span></p>
+
+<h3>4.1 卡点与破法</h3>
+<p>softmax 卡在结合律上。若把相似度换成特征映射的内积：</p>
+
+$$
+\exp\Big(\frac{q^\top k}{\sqrt{d_k}}\Big) \approx \phi(q)^\top \phi(k), \qquad \phi:\mathbb{R}^{d_k}\to\mathbb{R}^{d_\phi}
+$$
+
+<p>则</p>
+
+$$
+o \approx \frac{\sum_i v_i\,(\phi(k_i)^\top \phi(q))}{\sum_i \phi(k_i)^\top \phi(q)} = \frac{S\,\phi(q)}{z^\top \phi(q)}
+$$
+
+<p>其中递推：</p>
+
+$$
+S_t = S_{t-1} + v_t \phi(k_t)^\top, \qquad z_t = z_{t-1} + \phi(k_t)
+$$
+
+<p>读变成 $O(d_v d_\phi)$，与 N 无关——<strong>定容</strong>回来了。它在形式上就是一个 RNN，而且对 $S$ 线性，可以用 parallel scan 加速。</p>
+
+<div class="mermaid">
+flowchart TB
+  subgraph write [write]
+    vt[v_t] --> outer[outer with phi k_t]
+    kt[phi k_t] --> outer
+    outer --> addS[S += ...]
+    kt --> addz[z += phi k]
+  end
+  subgraph read [read]
+    S --> mul[S * phi q]
+    z --> den[z · phi q]
+    mul --> out[o = num / den]
+    den --> out
+  end
+  addS --> S
+</div>
+
+<h3>4.2 同一道题：为什么改口失败</h3>
+<pre>After A=1, B=5, A=3 with overlapping keys:
+S holds (v_A1 + v_A3) mixed on similar key directions
+query A → reads a blend, e.g. 2 instead of 3</pre>
+
+<p>累加笔法<strong>不区分新值和旧值</strong>：同一方向写两次就是相加。所以<strong>改口</strong>挂掉。若两条 key 不正交，外积还会在共享行列上互相加强度——<strong>隔离</strong>也挂。</p>
+
+<p><strong>上界直觉</strong>：一张 $d_v\times d_\phi$ 的矩阵，线性可区分的方向大约只有 $d_\phi$ 量级。地址需求超过这个数，必然撞车。</p>
+
+<div class="card">
+<strong>本章小结</strong>：Linear Attention 赎回定容与可 scan 的并行，但累加笔法先天不会改口，隔离也不稳。下一章把「加」改成「先读再写差额」。
+</div>
+
+<!-- ========== 5 ========== -->
+<h2 id="ch5">5. DeltaNet：写之前先读一眼</h2>
+
+<p><span class="tag">纠错笔法</span><span class="tag">delta rule</span></p>
+
+<h3>5.1 一句话 + 一个式子</h3>
+$$
+\hat{v}_t = S_{t-1} k_t, \quad e_t = v_t - \hat{v}_t, \quad S_t = S_{t-1} + \beta_t e_t k_t^\top
+$$
+
+<p>人话：先问账本「$k_t$ 上现在写着什么」，只把差额写回去。已经记住的，$e=0$，不再浪费容量。</p>
+
+<p><strong>渊源</strong>：这是经典 <strong>delta rule</strong> / online least squares 的一步。目标：</p>
+
+$$
+\mathcal{L}_t(S)=\tfrac12\|S k_t - v_t\|_2^2
+\quad\Rightarrow\quad
+\nabla_S\mathcal{L}_t=(S k_t-v_t)k_t^\top
+$$
+
+$$
+S_t = S_{t-1} - \beta_t \nabla_S\mathcal{L}_t = S_{t-1} + \beta_t (v_t - S_{t-1}k_t)k_t^\top
+$$
+
+<p>展开成「先擦后写」：</p>
+
+$$
+S_t = S_{t-1}(I - \beta_t k_t k_t^\top) + \beta_t v_t k_t^\top
+$$
+
+<p>几何意义：沿 $k_t$ 方向把旧内容压扁，再写入新值。对 $k_t$ 精确命中时 $S_t k_t = v_t$；对正交方向 $k_\perp$，状态不变。</p>
+
+<div class="mermaid">
+flowchart TB
+  S0[S_{t-1}] --> pred[pred = S k_t]
+  vt[v_t] --> err[e = v - pred]
+  pred --> err
+  err --> outer[beta * outer e k]
+  S0 --> erase[erase along k]
+  outer --> S1[S_t]
+  erase --> S1
+  qt[q_t] --> read[o = S q]
+  S1 --> read
+</div>
+
+<h3>5.2 同一道题</h3>
+<pre>t=1 A=1  → S maps k_A → 1
+t=2 B=5  → S maps k_B → 5  (if orthogonal, A untouched)
+t=3 A=3  → pred≈1, e≈2, write correction → S maps k_A → 3
+query A → 3 ✓   query B → 5 ✓ (when keys well separated)</pre>
+
+<p><strong>改口</strong>结构性回来了。隔离在 key 近似正交时接近满分；有夹角时仍有泄漏——所以说「治了八成」。</p>
+
+<h3>5.3 三个漏</h3>
+<ol>
+<li><strong>永不遗忘</strong>：没有衰减项，过期信息一直占着方向。</li>
+<li><strong>隔离不完美</strong>：非正交 key 的投影互相碰到。</li>
+<li><strong>并行变难</strong>：系数 $I-\beta kk^\top$ 依赖数据，不能像纯累加那样简单 scan；需要 chunk / WY 表示等更重的技巧。</li>
+</ol>
+
+<div class="card">
+<strong>本章小结</strong>：DeltaNet 用 delta rule 赎回<strong>改</strong>（先查旧值再写差额）；定容与大致留住仍在；隔离部分改善。账单是：更难并行 + 缺少按时间的<strong>删/过期</strong>。下一章给每一行加半衰期。
+</div>
+
+<!-- ========== 6 ========== -->
+<h2 id="ch6">6. Gated DeltaNet：给每一行一个半衰期</h2>
+
+<p><span class="tag">衰减+纠错</span><span class="tag">per-row γ</span></p>
+
+<h3>6.1 一句话 + 一个式子</h3>
+$$
+S_t = D_t\big[S_{t-1} - \beta_t \hat{v}_t k_t^\top\big] + \beta_t v_t k_t^\top,
+\quad D_t=\mathrm{diag}(\gamma_t),\quad \gamma_t=\sigma(W_\gamma x_t+b_\gamma)\in(0,1)^{d_v}
+$$
+
+<p>三个动作按顺序：① 沿 $k$ 擦掉旧预测（DeltaNet）；② 逐行乘 $\gamma$（Mamba 风格衰减）；③ 写入新值。<strong>新写入通常不乘 $\gamma$</strong>——刚写的不该立刻过期。</p>
+
+<pre class="mono">pred = S @ k_t
+old  = S - beta * outer(pred, k_t)
+S    = gamma[:, None] * old + beta * outer(v_t, k_t)</pre>
+
+<div class="mermaid">
+flowchart LR
+  S[S_{t-1}] --> erase[erase along k]
+  erase --> decay[row-wise * gamma]
+  decay --> write[add beta * v k^T]
+  write --> S2[S_t]
+</div>
+
+<h3>6.2 为什么门是「逐行」的</h3>
+<p>$S$ 的每一行对应一个 value 通道。逐行 $\gamma$ 的意思是：不同特征通道可以有不同半衰期——有的信息保质期短（代词指代），有的该长留（人名、标题）。这比「整个矩阵乘同一个标量」细，又比「给每一个历史位置单独门」便宜。</p>
+
+<h3>6.3 同一道题与三种故障</h3>
+<p>理想：改 A 时擦 A、写 3；B 行 $\gamma\approx 1$ 不被误伤。长程 distractor 上，对噪声行 $\gamma&lt;1$，让垃圾慢慢退场。</p>
+<p>三种典型故障：</p>
+<ul>
+<li>$\gamma$ 全局偏小 → 误伤，该留的也淡（伤<strong>留住</strong>）</li>
+<li>$\gamma$ 学不动、常年≈1 → 退回「永不遗忘」的 DeltaNet</li>
+<li>擦与门顺序/括号搞错 → 新写也被衰减，或旧脏数据没擦干净</li>
+</ul>
+
+<div class="card">
+<strong>本章小结</strong>：Gated DeltaNet 在定容·留住·改口之上补了显式的<strong>删/过期</strong>（逐行 $\gamma$）；隔离仍有尾巴，门可能误伤。压缩派的上限大致到此。若还要任意位置精确逐字召回，需要分层——下一章 Hybrid。
+</div>
+
+<!-- ========== 7 ========== -->
+<h2 id="ch7">7. Hybrid：两种记忆分层共存</h2>
+
+<p><span class="tag">分层</span><span class="tag">调度写在架构里</span></p>
+
+<h3>7.1 思想</h3>
+<p>固定大小的 $S$ 最多能干净回答约 $d_\phi$ 个独立方向；「把第 3 页第 7 行编号精确抄出来」需要任意位置的副本。这两件事在同一层互斥。</p>
+<p><strong>解法</strong>：不要让一层做所有事。</p>
+<ul>
+<li><strong>memory layers</strong>（线性 / Delta 家族）：定容，负责大意、长程背景、廉价传信息</li>
+<li><strong>retrieval layers</strong>（softmax attention）：不合并，负责精确原文、改口敏感的绑定</li>
+</ul>
+
+<p>调度表写死在架构里：哪些层用哪种写规则，是设计选择，不是运行时搜索。</p>
+
+<div class="mermaid">
+flowchart TB
+  x[token stream] --> M[memory layers fixed-state write]
+  x --> R[retrieval layers full KV]
+  M --> mix[interleave / residual stack]
+  R --> mix
+  mix --> out[output]
+</div>
+
+<h3>7.2 同一道题</h3>
+<p>A/B 的精确绑定可以由某几层 attention 保管；88 个 distractor 的「过场」由 memory 层廉价消化。读 A=3、B=5 时，数字可能来自不同层的协作——脚注是：精确层负责改口与逐字，memory 层负责把长噪声流压住。</p>
+
+<h3>7.3 账单</h3>
+<p>不是「数量级魔法」，而是比例题。设 $L_m$ 层 memory、$L_a$ 层 attention：</p>
+
+$$
+\text{train FLOPs} \approx L_m O(N d^2) + L_a O(N^2 d),
+\quad
+\text{state} \approx L_m O(d^2) + L_a O(N d)
+$$
+
+<p>多几层 attention，显存与算力立刻往 Transformer 侧滑；全用 memory，精确召回又不够。工程上常见的是小比例 retrieval 层插在深层。</p>
+
+<div class="card">
+<strong>本章小结</strong>：Hybrid 承认单层写规则无法同时白拿四条验收，把冲突上交到「层分工」。判断题变成：你的任务更缺精确绑定，还是更缺长上下文定容？
+</div>
+
+<!-- ========== 8 ========== -->
+<h2 id="ch8">8. 收束：同一台状态机，七个读数</h2>
+
+<table>
+<thead>
+<tr><th>模型</th><th>写规则</th><th>留住</th><th>改口</th><th>隔离</th><th>定容</th><th>关键代价</th></tr>
+</thead>
+<tbody>
+<tr><td>RNN</td><td>稠密搅拌</td><td>弱</td><td>无</td><td>无</td><td>是</td><td>梯度消失/爆炸</td></tr>
+<tr><td>LSTM</td><td>门控 highway</td><td>较强</td><td>弱/靠学</td><td>弱/靠学</td><td>是</td><td>串行</td></tr>
+<tr><td>Transformer</td><td>不合并</td><td>强</td><td>强</td><td>强</td><td>否</td><td>$O(N^2)$ + KV cache</td></tr>
+<tr><td>Linear Attn</td><td>累加</td><td>中</td><td>无</td><td>弱</td><td>是</td><td>混叠、容量上界</td></tr>
+<tr><td>DeltaNet</td><td>纠错</td><td>中强</td><td>强</td><td>中</td><td>是</td><td>难并行、不遗忘</td></tr>
+<tr><td>Gated Delta</td><td>衰减+纠错</td><td>中强</td><td>强</td><td>中</td><td>是</td><td>门误伤</td></tr>
+<tr><td>Hybrid</td><td>分层调度</td><td>强*</td><td>强*</td><td>强*</td><td>混合</td><td>比例与系统设计</td></tr>
+</tbody>
+</table>
+<p style="color:var(--muted);font-size:0.9rem;">*Hybrid 的「强」来自层协作，不是单层写规则同时满分。</p>
+
+<p>用增删改查再扫一眼上表：RNN 是「增和查都有，改/删无地址」；Transformer 是「增、查极强，几乎不真删，定容炸掉」；Linear 是「只会增式合并，不会改」；DeltaNet 第一次把<strong>改</strong>做成先查再写差额；Gated 给了可学的<strong>删/过期</strong>；Hybrid 把增删改查拆到不同层——精确层偏改与查，压缩层偏增与过期式删。</p>
+
+<h3>迁移检查（合上书之前）</h3>
+<ol>
+<li>给定一条写规则，你能不能预测它在<strong>留住·改口·隔离·定容</strong>上的得分？</li>
+<li>看到 $S\leftarrow S+vk^\top$ 与 $S\leftarrow S+\beta(v-Sk)k^\top$，你能不能说出差在「有没有先读」？</li>
+<li>有人说「再加一个遗忘门就搞定」，你能不能回答：忘是写的副产品，门乘在哪、乘在什么方向，决定误伤还是过期？</li>
+<li>为什么 Hybrid 不是「更花的 DeltaNet」，而是承认单层冲突后的架构级分工？</li>
+<li>任选一章的更新式，你能不能标出：哪一步是增、哪一步是改、哪一步是删、查发生在哪里？</li>
+</ol>
+
+<blockquote>
+<strong>最后一根钉子</strong>：能不能<strong>改</strong>，取决于有没有地址；会不会串味，取决于一次写是否误<strong>改/删</strong>到别人；能不能逐字<strong>查</strong>回，取决于你留没留 $N$ 份副本；能不能继续<strong>增</strong>，取决于定不容。增删改查各有价，没有一个架构能同时白拿。
+</blockquote>
+
+<div class="mermaid">
+flowchart TB
+  q0[One ledger problem] --> r1[RNN: no page numbers]
+  r1 --> r2[LSTM: highway gates]
+  r2 --> r3[Transformer: keep every row]
+  r3 --> r4[Linear: merge by addition]
+  r4 --> r5[Delta: merge by correction]
+  r5 --> r6[Gated: correction + decay]
+  r6 --> r7[Hybrid: split the job across layers]
+</div>
+
+<p class="foot">
+Ember 重写版 · 面向视觉学习者 · 强调因果链与验收标记<br>
+原教学结构参考「序列模型的记忆：从 RNN 到 Hybrid DeltaNet」；本版重写重点在连贯、多维度与可迁移直觉。<br>
+公式方向约定：$S\in\mathbb{R}^{d_v\times d_k}$，$o=Sq$，写 $vk^\top$。
+</p>
+
+</div>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral', securityLevel: 'loose' });
+</script>
+</body>
+</html>
