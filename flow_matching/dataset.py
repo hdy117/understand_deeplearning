@@ -54,7 +54,7 @@ class ImgDataset(Dataset):
     def __len__(self) -> int:
         len(self.date_list)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index) -> tuple[torch.Tensor, torch.Tensor]:
         # {"category":"", "path":""}
         one_pair_data = self.date_list[index]
         array = None
@@ -71,7 +71,7 @@ class ImgDataset(Dataset):
         return img_tensor, label_one_hot
 
     def label_2_one_hot(self, label: str = "airplane") -> torch.Tensor:
-        one_hot_tensor: torch.Tensor = torch.zeros(size=[10])
+        one_hot_tensor: torch.Tensor = torch.zeros(size=[self.category_num])
 
         if label in self.category_set:
             index = self.category_set.index(label)
