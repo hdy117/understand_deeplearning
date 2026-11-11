@@ -1,0 +1,979 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>矩阵乘法的几副眼镜：从 Aᵀ 到 PCA 与 SVD · 教学版</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#f9f4ed;
+  --paper-2:#f3ecdf;
+  --panel:#fffdf8;
+  --line:#e3d9c6;
+  --ink:#1c1a16;
+  --ink-2:#5c564a;
+  --row:#e8890c;
+  --row-soft:#ffe7c2;
+  --col:#2f7fc4;
+  --col-soft:#d8eafa;
+  --res:#d6336c;
+  --res-soft:#fbd6e5;
+  --accent:#2052bb;
+  --green:#2b8a3e;
+  --mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+  --sans:'IBM Plex Sans','Noto Sans SC',-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+  --nav-h:52px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;scroll-padding-top:calc(var(--nav-h) + 16px)}
+body{font:17px/1.7 var(--sans);color:var(--ink);background:var(--paper);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+button{cursor:pointer;font-family:var(--sans)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+code,.mono{font-family:var(--mono)}
+::selection{background:var(--res-soft)}
+
+nav.topnav{position:sticky;top:0;z-index:60;background:rgba(249,244,237,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.topnav-inner{max-width:1120px;margin:0 auto;height:var(--nav-h);display:flex;align-items:center;gap:18px;padding:0 20px;overflow-x:auto;scrollbar-width:none}
+.topnav-inner::-webkit-scrollbar{display:none}
+.topnav .brand{font-weight:700;white-space:nowrap;font-size:15px}
+.topnav .brand span{color:var(--res)}
+.topnav .links{display:flex;gap:4px;margin-left:auto}
+.topnav .links a{white-space:nowrap;font-size:14px;color:var(--ink-2);padding:6px 10px;border-radius:6px;text-decoration:none}
+.topnav .links a:hover{background:var(--paper-2);color:var(--ink)}
+.topnav .links a b{font-family:var(--mono);font-weight:600;margin-right:4px}
+.topnav .links a.sequel{background:var(--ink);color:var(--paper)}
+
+.hero{max-width:1120px;margin:0 auto;padding:9vh 20px 6vh;position:relative}
+.hero .kicker{font-family:var(--mono);font-size:13px;letter-spacing:.14em;color:var(--ink-2);text-transform:uppercase;margin-bottom:3vh}
+.hero h1{font-weight:900;line-height:1.04;letter-spacing:-.01em;font-size:clamp(2.5rem,7.6vw,5.6rem)}
+.hero .ln1{display:block;padding-left:4vw}
+.hero .ln2{display:block;padding-left:17vw;color:var(--res)}
+.hero .ln3{display:block;padding-left:8vw;font-size:.42em;color:var(--ink-2);font-weight:500;margin-top:1.2vh}
+.hero .chain{display:inline-flex;align-items:center;gap:.45em;margin-top:4.5vh;font-family:var(--mono);font-size:clamp(.85rem,2.1vw,1.15rem);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.7em 1em;box-shadow:4px 4px 0 var(--paper-2);flex-wrap:wrap}
+.hero .chain .merge{color:var(--res);font-weight:600}
+.hero .hint{margin-top:2vh;color:var(--ink-2);font-size:15px;max-width:60ch}
+
+main{max-width:1120px;margin:0 auto;padding:0 20px 12vh}
+section.lens{margin-top:9vh}
+section.lens h2{position:sticky;top:var(--nav-h);z-index:50;background:var(--paper);padding:14px 0 10px;font-size:clamp(1.5rem,3.6vw,2.2rem);font-weight:900;display:flex;align-items:baseline;gap:.55em;border-bottom:2px solid var(--ink)}
+section.lens h2 .tag{font-family:var(--mono);font-size:.5em;font-weight:600;color:var(--paper);background:var(--ink);border-radius:6px;padding:.25em .55em;transform:translateY(-.35em)}
+.prose{max-width:68ch;margin-top:1.6em}
+.prose p{margin:.9em 0}
+.prose strong{font-weight:700}
+.formula{font-family:var(--mono);font-size:1.02em;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1em 1.2em;margin:1.2em 0;overflow-x:auto;white-space:nowrap}
+.formula .hl-r{color:var(--row);font-weight:600}
+.formula .hl-c{color:var(--col);font-weight:600}
+.formula .hl-p{color:var(--res);font-weight:600}
+.formula .hl-g{color:var(--green);font-weight:600}
+.callout{border-left:3px solid var(--res);background:var(--panel);padding:.9em 1.2em;margin:1.2em 0;border-radius:0 10px 10px 0}
+.callout.tone-b{border-left-color:var(--accent)}
+.callout.tone-g{border-left-color:var(--green)}
+.bridge{display:inline-block;font-family:var(--mono);font-size:12.5px;color:var(--accent);background:#e3ecfb;border-radius:6px;padding:.15em .6em;margin-left:.4em;white-space:nowrap}
+
+.demo{margin:2.2em 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:clamp(14px,3vw,28px);box-shadow:6px 6px 0 var(--paper-2)}
+.demo-title{font-family:var(--mono);font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:14px;color:var(--ink-2);margin-bottom:12px}
+.legend .chip{display:inline-flex;align-items:center;gap:6px}
+.legend .sw{width:14px;height:14px;border-radius:4px;display:inline-block;border:1px solid rgba(0,0,0,.18)}
+.sw-r{background:var(--row-soft);border-color:var(--row)}
+.sw-c{background:var(--col-soft);border-color:var(--col)}
+.sw-p{background:var(--res-soft);border-color:var(--res)}
+.sw-g{background:#d3f9d8;border-color:var(--green)}
+.matrow{display:flex;align-items:center;gap:clamp(8px,2vw,22px);flex-wrap:wrap;justify-content:center}
+.matbox{display:flex;flex-direction:column;align-items:center;gap:8px}
+.mat-label{font-family:var(--mono);font-weight:600;font-size:15px}
+.mat{display:grid;gap:4px}
+.cell{width:var(--cs,44px);height:var(--cs,44px);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:calc(var(--cs,44px)*.34);background:#fff;border:1.5px solid var(--line);border-radius:7px;transition:background .15s ease,transform .15s ease,border-color .15s ease,opacity .15s ease;color:var(--ink)}
+button.cell{padding:0}
+button.cell:hover{transform:scale(1.08)}
+.cell.hl-r{background:var(--row-soft);border-color:var(--row)}
+.cell.hl-c{background:var(--col-soft);border-color:var(--col)}
+.cell.hl-p{background:var(--res-soft);border-color:var(--res);font-weight:600}
+.cell.dim{opacity:.28}
+.op{font-size:26px;font-weight:600;color:var(--ink-2);font-family:var(--mono)}
+.readout{margin-top:16px;background:var(--paper);border:1px dashed var(--line);border-radius:10px;padding:12px 16px;font-family:var(--mono);font-size:clamp(.8rem,2vw,.95rem);line-height:1.9;min-height:3.4em;overflow-x:auto;white-space:nowrap}
+.readout .t-r{color:var(--row);font-weight:600}
+.readout .t-c{color:var(--col);font-weight:600}
+.readout .t-p{color:var(--res);font-weight:600}
+.readout .t-g{color:var(--green);font-weight:600}
+.controls{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:16px}
+.btn{background:var(--ink);color:var(--paper);border:none;border-radius:8px;padding:10px 18px;font-size:15px;font-weight:600;transition:transform .15s ease,background .15s ease}
+.btn:hover{background:#000;transform:translateY(-1px)}
+.btn.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--ink)}
+.btn.ghost:hover{background:var(--paper-2)}
+.btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.slider-row{display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:14px;flex-wrap:wrap}
+input[type=range]{accent-color:var(--res);width:min(240px,58vw);height:32px;cursor:pointer}
+.slider-val{min-width:5em;font-weight:600}
+
+.canvaswrap{display:flex;gap:clamp(10px,2.5vw,24px);flex-wrap:wrap;justify-content:center;align-items:flex-start}
+.canvasbox{display:flex;flex-direction:column;align-items:center;gap:8px}
+.canvasbox .clabel{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink-2)}
+canvas.plot{background:#fff;border:1.5px solid var(--line);border-radius:10px;max-width:100%;touch-action:none}
+.pill{display:inline-block;font-family:var(--mono);font-size:13px;font-weight:600;border-radius:999px;padding:.25em .9em;border:1.5px solid currentColor}
+.pill.pos{color:var(--green);background:#d3f9d8}
+.pill.neg{color:var(--res);background:var(--res-soft)}
+.pill.ind{color:#9c5a00;background:#ffe8cc}
+.pill.semi{color:var(--ink-2);background:var(--paper-2)}
+
+.flowchain{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;margin:2em 0}
+.fnode{flex:1 1 140px;background:var(--panel);border:1.5px solid var(--line);border-radius:12px;padding:14px 12px;text-align:center;position:relative}
+.fnode .ft{font-weight:700;font-size:15px;margin-bottom:4px}
+.fnode .fd{font-size:12.5px;color:var(--ink-2);line-height:1.5}
+.farrow2{align-self:center;font-family:var(--mono);font-weight:600;color:var(--res);padding:0 6px;font-size:18px}
+
+footer{border-top:1px solid var(--line);margin-top:10vh;padding:5vh 20px;text-align:center;color:var(--ink-2);font-size:14px}
+footer .mono{font-size:13px}
+
+@media (max-width:640px){
+  :root{--cs:36px}
+  .hero{padding-top:6vh}
+  section.lens h2{font-size:1.35rem}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  html{scroll-behavior:auto}
+}
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <div class="topnav-inner">
+    <div class="brand">转置<span>·</span>二次型<span>·</span>谱</div>
+    <div class="links">
+      <a href="#sec-0"><b>00</b>六副眼镜</a>
+      <a href="#sec-1"><b>01</b>转置</a>
+      <a href="#sec-2"><b>02</b>Gram</a>
+      <a href="#sec-3"><b>03</b>二次型</a>
+      <a href="#sec-4"><b>04</b>SVD</a>
+      <a href="#sec-5"><b>05</b>PCA</a>
+      <a href="#sec-6"><b>Σ</b>收拢</a>
+      <a href="matrix_multiplication_view.html" class="sequel">← 上篇 · 六副眼镜</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="kicker">Six Lenses · 下篇 — 当矩阵乘法遇见转置</div>
+  <h1>
+    <span class="ln1">矩阵乘法的几副眼镜</span>
+    <span class="ln2">从 A<sup>T</sup> 到 PCA 与 SVD</span>
+    <span class="ln3">A teaching path through transpose, Gram, SVD and PCA</span>
+  </h1>
+  <div class="chain">
+    <span>A<sup>T</sup></span><span>⟶</span><span class="merge">A<sup>T</sup>A</span><span>⟶</span><span>x<sup>T</sup>Mx</span><span>⟶</span><span class="merge">UΣV<sup>T</sup></span><span>⟶</span><span>PCA</span>
+  </div>
+  <p class="hint">先把同一个乘法从 dot product、row、column、outer product、composition、geometry 六个方向走一遍，再看 transpose 如何长出 Gram matrix、quadratic form、SVD 和 PCA。每个大桥都配手算例子或可动手玩的演示。</p>
+</header>
+
+<main>
+
+<!-- ================= SEC 1 : transpose ================= -->
+<!-- ================= SEC 0 : teaching bridge ================= -->
+<section class="lens" id="sec-0">
+  <h2><span class="tag">00</span>先把同一个乘法走六遍：shape 是护栏，语义是方向盘</h2>
+  <div class="prose">
+    <p class="lead">这一节只做一件事：把 <code>A B</code> 这三个字符拆成六种互补的读法。先看数字怎样对接，再看 rows、columns、rank-1 小块和 linear map 怎样接上。</p>
+    <p>取两个小矩阵：</p>
+    <div class="formula">A = [ 1  2 ; 3  4 ]　　B = [ 5  6 ; 7  8 ]　　C = AB = [ 19  22 ; 43  50 ]</div>
+    <p><strong>第一步：dot product。</strong> <code>C<sub>11</sub> = 1×5 + 2×7 = 19</code>。一个 output cell，就是 <code>A</code> 的一行和 <code>B</code> 的一列做一次 dot product。</p>
+    <p><strong>第二步：row recipe。</strong> <code>A</code> 的第一行是 <code>(1, 2)</code>，所以 <code>C</code> 的第一行是 <code>1×B</code> 的第一行加上 <code>2×B</code> 的第二行：</p>
+    <div class="formula">C<sub>1:</sub> = 1 [ 5  6 ] + 2 [ 7  8 ] = [ 19  22 ]</div>
+    <p><strong>第三步：column mixture。</strong> <code>B</code> 的第一列是 <code>(5, 7)<sup>T</sup></code>，所以 <code>C</code> 的第一列是 <code>5×A</code> 的第一列加上 <code>7×A</code> 的第二列：</p>
+    <div class="formula">C<sub>:1</sub> = 5 [ 1 ; 3 ] + 7 [ 2 ; 4 ] = [ 19 ; 43 ]</div>
+    <p><strong>第四步：outer product。</strong> 固定共同索引 <code>k</code>，一层一层叠 rank-1 地毯：</p>
+    <div class="formula">AB = A<sub>:1</sub>B<sub>1:</sub> + A<sub>:2</sub>B<sub>2:</sub></div>
+    <p><strong>第五步：composition。</strong> 对向量 <code>x</code> 而言，<code>(AB)x = A(Bx)</code>：最右边的 <code>B</code> 先把输入改写一次，<code>A</code> 再接手。</p>
+    <p><strong>第六步：geometry。</strong> 矩阵不是一张冷冰冰的数字表，而是一个 map。它可能旋转、拉伸、压扁、翻转，甚至把平面压成一条线；SVD 会把这些动作分开。</p>
+  </div>
+  <div class="flowchain" aria-label="Six complementary views of matrix multiplication">
+    <div class="fnode"><div class="ft">dot product</div><div class="fd">一个格子如何算</div></div><div class="farrow2">→</div>
+    <div class="fnode"><div class="ft">row recipe</div><div class="fd">一行如何混合 B 的行</div></div><div class="farrow2">→</div>
+    <div class="fnode"><div class="ft">column mixture</div><div class="fd">一列如何混合 A 的列</div></div><div class="farrow2">→</div>
+    <div class="fnode"><div class="ft">outer products</div><div class="fd">rank-1 地毯逐层铺</div></div><div class="farrow2">→</div>
+    <div class="fnode"><div class="ft">composition</div><div class="fd">两个 map 接力</div></div><div class="farrow2">→</div>
+    <div class="fnode"><div class="ft">geometry</div><div class="fd">方向、长度、面积怎样变</div></div>
+  </div>
+  <div class="callout tone-b"><strong>小结：</strong>六副眼镜没有六种乘法；它们只是把同一笔账分别解释成“一个格子、一整行、一整列、若干 rank-1 小块、两个 map 的接力和一个几何动作”。</div>
+</section>
+
+
+<section class="lens" id="sec-1">
+  <h2><span class="tag">01</span>Transpose · 转置的三层含义</h2>
+  <div class="prose">
+    <p><strong>第一层（表面）：</strong>行列互换，绕主对角线翻个身——(A<sup>T</sup>)<sub>ij</sub> = A<sub>ji</sub>。这是定义，但几乎没告诉你任何事。</p>
+    <p><strong>第二层（结构）：</strong>行空间与列空间互换身份。A 的列空间变成 A<sup>T</sup> 的行空间——转置是从"列视角"切换到"行视角"的机械开关。<span class="bridge">↔ 上篇 02/03 列与行的对偶</span></p>
+    <p><strong>第三层（深层，也是真正的定义）：</strong>转置是<strong>内积结构下的伴随算子（adjoint）</strong>——它是唯一能让下面这个恒等式成立的矩阵：</p>
+  </div>
+  <div class="formula">⟨Ax, y⟩ = ⟨x, A<sup>T</sup>y⟩　⟺　(Ax)<sup>T</sup>y = x<sup>T</sup>(A<sup>T</sup>y)</div>
+  <div class="prose">
+    <p>读法：<strong>"转置是把 A 搬到内积另一边时，必须付的代价。"</strong> A 本来作用在左边的 x 身上；想把它挪到右边的 y 身上，就得把它换成 A<sup>T</sup>。凡是有内积的地方（投影、最小二乘、量子力学的厄米共轭），这个恒等式都在背后默默工作。</p>
+    <div class="callout tone-b">
+      <p><strong>把“伴随”翻译成人话：</strong>“内积结构”只是说，这个空间有一把比较向量的尺子；这里的尺子就是普通 dot product：<span class="mono">⟨u,v⟩ = u<sup>T</sup>v</span>。</p>
+      <p>于是有两条完全等价的路线：</p>
+      <div class="flowchain">
+        <div class="fnode"><div class="ft">x</div><div class="fd">input direction</div></div><div class="farrow2">→</div>
+        <div class="fnode"><div class="ft">A x</div><div class="fd">先经过 A</div></div><div class="farrow2">→</div>
+        <div class="fnode"><div class="ft">⟨Ax, y⟩</div><div class="fd">和 y 比较</div></div>
+      </div>
+      <div class="flowchain">
+        <div class="fnode"><div class="ft">y</div><div class="fd">output direction</div></div><div class="farrow2">→</div>
+        <div class="fnode"><div class="ft">A<sup>T</sup>y</div><div class="fd">被拉回 input space</div></div><div class="farrow2">→</div>
+        <div class="fnode"><div class="ft">⟨x,A<sup>T</sup>y⟩</div><div class="fd">和 x 比较</div></div>
+      </div>
+      <p>两条路的 scalar 永远相同。所谓 <strong>adjoint</strong>，就是“当 A 从 inner product 的左边搬到右边时，保证所有比较结果不变的那个 map”。在普通 Euclidean 坐标下，它恰好写成 transpose。</p>
+    </div>
+    <div class="prose">
+      <p>为什么必然是 transpose？把左边展开：</p>
+      <div class="formula">⟨Ax,y⟩ = Σ<sub>i</sub>(Σ<sub>j</sub>A<sub>ij</sub>x<sub>j</sub>)y<sub>i</sub> = Σ<sub>j</sub>x<sub>j</sub>(Σ<sub>i</sub>A<sub>ij</sub>y<sub>i</sub>) = ⟨x,A<sup>T</sup>y⟩</div>
+      <p>括号里按 <code>j</code> 收集的那一坨，正是 <code>(A<sup>T</sup>y)<sub>j</sub></code>。原来按 rows 读的系数，被 transpose 重新按 columns 读回来。</p>
+      <p><strong>责任回传类比：</strong><code>A</code> 把 input coordinates 混合成 output coordinates；如果 output 方向 <code>y</code> 对结果打了一个分数，<code>A<sup>T</sup>y</code> 就把这份分数沿原来的连接分配回 input coordinates。neural network 的 backward pass 里，linear layer 的 gradient 反复出现 transpose，就是这条 adjoint 规则在工作。</p>
+      <p class="small muted">符号表：<code>A:m×n</code>，<code>x:n</code>，<code>y:m</code>，所以 <code>Ax:m</code>、<code>A<sup>T</sup>y:n</code>，两边最后都是 scalar。</p>
+    </div>
+    <div class="formula">‖Ax‖² = ⟨Ax,Ax⟩ = ⟨x,A<sup>T</sup>Ax⟩</div>
+    <div class="callout tone-g"><strong>这就是 A<sup>T</sup>A 的入口：</strong>它在 input space 里记录“经过 A 以后，哪些方向被拉得更长”。后面的 SVD 和 PCA 都会回来读这本账。</div>
+
+    <div class="callout tone-b">复合视角的推论：(AB)<sup>T</sup> = B<sup>T</sup>A<sup>T</sup>——<strong>接力的转置 = 倒带，倒带必须反序</strong>。先穿袜子再穿鞋，脱的时候得先脱鞋。<span class="bridge">↔ 上篇 05 复合视角</span></div>
+  </div>
+  <div class="demo" id="demo-adjoint">
+    <div class="demo-title">playground — 伴随恒等式：拖滑块调 x 和 y，等式两边永远相等</div>
+    <div class="legend">
+      <span class="chip"><span class="sw sw-r"></span>A 作用在 x 上（左边）</span>
+      <span class="chip"><span class="sw sw-c"></span>A<sup>T</sup> 作用在 y 上（右边）</span>
+      <span class="chip"><span class="sw sw-p"></span>两个内积恒等</span>
+    </div>
+    <div class="matrow" id="adj-stage"></div>
+    <div class="readout" id="adj-readout" aria-live="polite"></div>
+    <div class="controls">
+      <div class="slider-row">x₁ <input type="range" id="adj-x1" min="-3" max="3" step="1" value="1" aria-label="x1"><span class="slider-val" id="adj-x1-val">1</span></div>
+      <div class="slider-row">x₂ <input type="range" id="adj-x2" min="-3" max="3" step="1" value="-2" aria-label="x2"><span class="slider-val" id="adj-x2-val">-2</span></div>
+      <div class="slider-row">y₁ <input type="range" id="adj-y1" min="-3" max="3" step="1" value="2" aria-label="y1"><span class="slider-val" id="adj-y1-val">2</span></div>
+      <div class="slider-row">y₂ <input type="range" id="adj-y2" min="-3" max="3" step="1" value="0" aria-label="y2"><span class="slider-val" id="adj-y2-val">0</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SEC 2 : Gram ================= -->
+<section class="lens" id="sec-2">
+  <h2><span class="tag">02</span>Gram Matrix · 列与列的全员相亲表</h2>
+  <div class="prose">
+    <p>把点积视角开足马力：<strong>G = A<sup>T</sup>A 的第 (i, j) 格，就是 A 的第 i 列与第 j 列的 dot product</strong>。整张表 = A 的列之间的"全员相似度记分表"——对角线是各列的 ‖长度‖²，非对角线是列与列的"夹角余弦 × 长度积"。<span class="bridge">↔ 上篇 01 点积视角</span></p>
+    <p>两个白送的性质，都从定义直接掉出来：</p>
+    <p><strong>对称：</strong>G<sup>T</sup> = (A<sup>T</sup>A)<sup>T</sup> = A<sup>T</sup>A = G（倒带两次回到原样）。<strong>半正定：</strong>x<sup>T</sup>Gx = x<sup>T</sup>A<sup>T</sup>Ax = (Ax)<sup>T</sup>(Ax) = ‖Ax‖² ≥ 0——向量的长度平方永远非负。Gram 矩阵是"对称 + 半正定"最大的天然货源。</p>
+  </div>
+  <div class="formula">G<sub>ij</sub> = <span class="hl-r">a</span><sub>:i</sub><sup>T</sup> · <span class="hl-c">a</span><sub>:j</sub>　　x<sup>T</sup>Gx = ‖Ax‖² ≥ 0</div>
+  <div class="demo" id="demo-gram">
+    <div class="demo-title">playground — 点（或按 Tab 移到）G 的任意一格，看它是哪两列的点积</div>
+    <div class="legend">
+      <span class="chip"><span class="sw sw-r"></span>第 i 列</span>
+      <span class="chip"><span class="sw sw-c"></span>第 j 列</span>
+      <span class="chip"><span class="sw sw-p"></span>G 的 (i,j) 格</span>
+    </div>
+    <div class="matrow" id="gram-stage"></div>
+    <div class="readout" id="gram-readout" aria-live="polite"></div>
+    <div class="controls">
+      <button class="btn" id="gram-regen" type="button">换一组数据</button>
+      <span class="mono" style="font-size:13px;color:var(--ink-2)">注意：G 沿对角线镜像对称，对角线上是 ‖列‖²</span>
+    </div>
+  </div>
+</section>
+<!-- ================= SEC 3 : quadratic forms ================= -->
+<section class="lens" id="sec-3">
+  <h2><span class="tag">03</span>Quadratic Form · 碗、鞍与主轴</h2>
+  <div class="prose">
+    <p>二次型就是"向量与矩阵再与向量自己点积"：<strong>q(x) = x<sup>T</sup>Mx</strong>。为什么只研究对称的 M？因为任何方阵 M 的二次型都只由它的对称部分 (M+M<sup>T</sup>)/2 决定——反对称部分恒贡献零（x<sup>T</sup>Kx = −x<sup>T</sup>Kx ⇒ =0）。所以讨论二次型 = 讨论对称矩阵，而对称矩阵正是 Gram 矩阵的老家。</p>
+    <p>几何上，q(x) 是一个抛物面状的碗（或鞍）。<strong>特征值是碗的"曲率方向表"：</strong>全正则碗（正定），全负倒扣（负定），有正有负则鞍（不定）。<strong>主轴定理</strong>说：对称矩阵总能用特征向量作新坐标轴，把交叉项消掉——碗永远可以"摆正"，摆正的坐标系就是特征向量系。</p>
+  </div>
+  <div class="formula">q(x) = x<sup>T</sup>Mx　→　换到特征向量坐标系后：q = <span class="hl-g">λ₁</span>z₁² + <span class="hl-g">λ₂</span>z₂²　（交叉项消失）</div>
+  <div class="demo" id="demo-quad">
+    <div class="demo-title">playground — 拖 a, b, c 构造 M = [[a, b], [b, c]]，看等高线 xᵀMx = 1 的形状与正定性</div>
+    <div class="canvaswrap">
+      <div class="canvasbox"><canvas class="plot" id="quad-canvas" width="380" height="380"></canvas><div class="clabel">等高线 xᵀMx = 1（粉线）与特征向量轴</div></div>
+    </div>
+    <div class="readout" id="quad-readout" aria-live="polite"></div>
+    <div class="controls">
+      <div class="slider-row">a <input type="range" id="qa" min="-3" max="3" step="0.1" value="2" aria-label="a"><span class="slider-val" id="qa-val">2.0</span></div>
+      <div class="slider-row">b <input type="range" id="qb" min="-3" max="3" step="0.1" value="0.8" aria-label="b"><span class="slider-val" id="qb-val">0.8</span></div>
+      <div class="slider-row">c <input type="range" id="qc" min="-3" max="3" step="0.1" value="1" aria-label="c"><span class="slider-val" id="qc-val">1.0</span></div>
+      <span class="pill pos" id="quad-pill">正定</span>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SEC 4 : SVD ================= -->
+<section class="lens" id="sec-4">
+  <h2><span class="tag">04</span>SVD · 按重要性排序的地毯</h2>
+  <div class="prose">
+    <p>奇异值分解 A = UΣV<sup>T</sup> 有两个同等重要的读法，正好接上上篇两副眼镜：</p>
+    <p><strong>读法一 · 外积视角：</strong>A = Σ<sub>i</sub> σ<sub>i</sub> u<sub>i</sub>v<sub>i</sub><sup>T</sup>——任何矩阵都是 rank-1 地毯之和，而 SVD 把地毯<strong>按重要性 σ<sub>1</sub> ≥ σ<sub>2</sub> ≥ … 排好了序</strong>。想近似 A？剪掉 σ 小的地毯就行，这是最优低秩近似（Eckart–Young）。<span class="bridge">↔ 上篇 04 外积视角</span></p>
+    <p><strong>读法二 · 复合视角：</strong>A = U Σ V<sup>T</sup> 把任意线性映射拆成三段接力：<strong>先旋转/翻转（V<sup>T</sup>），再沿坐标轴拉伸（Σ），最后再旋转（U）</strong>。单位圆永远被映成椭圆，V 的列给出"输入方向"，σ 给出"拉伸倍数"，U 的列给出"输出方向"。<span class="bridge">↔ 上篇 05 复合视角</span></p>
+  </div>
+  <div class="formula">A = <span class="hl-r">V<sup>T</sup> 旋转</span> → <span class="hl-p">Σ 拉伸</span> → <span class="hl-c">U 旋转</span>　　= Σ<sub>i</sub> <span class="hl-g">σ<sub>i</sub></span> u<sub>i</sub>v<sub>i</sub><sup>T</sup></div>
+  <div class="demo" id="demo-svd">
+    <div class="demo-title">playground A — 圆 → 椭圆：拖 θ 转动输入向量 x，看它如何落到椭圆上；调 A 的四个元素改变映射</div>
+    <div class="canvaswrap">
+      <div class="canvasbox"><canvas class="plot" id="svd-left" width="320" height="320"></canvas><div class="clabel">输入空间：单位圆 + v₁, v₂</div></div>
+      <div class="canvasbox"><canvas class="plot" id="svd-right" width="320" height="320"></canvas><div class="clabel">输出空间：椭圆 + σ₁u₁, σ₂u₂</div></div>
+    </div>
+    <div class="readout" id="svd-readout" aria-live="polite"></div>
+    <div class="controls">
+      <div class="slider-row">θ <input type="range" id="svd-theta" min="0" max="628" step="1" value="40" aria-label="输入角度"><span class="slider-val" id="svd-theta-val">40°</span></div>
+    </div>
+    <div class="controls">
+      <div class="slider-row">a <input type="range" id="svd-a" min="-2" max="2" step="0.1" value="1.4" aria-label="a"><span class="slider-val" id="svd-a-val">1.4</span></div>
+      <div class="slider-row">b <input type="range" id="svd-b" min="-2" max="2" step="0.1" value="0.6" aria-label="b"><span class="slider-val" id="svd-b-val">0.6</span></div>
+      <div class="slider-row">c <input type="range" id="svd-c" min="-2" max="2" step="0.1" value="-0.4" aria-label="c"><span class="slider-val" id="svd-c-val">-0.4</span></div>
+      <div class="slider-row">d <input type="range" id="svd-d" min="-2" max="2" step="0.1" value="0.9" aria-label="d"><span class="slider-val" id="svd-d-val">0.9</span></div>
+      <span class="mono" style="font-size:13px;color:var(--ink-2)">A = [[a, b], [c, d]]</span>
+    </div>
+  </div>
+  <div class="demo" id="demo-rank">
+    <div class="demo-title">playground B — rank-k 近似：拖 k，看地毯一块块把图像拼回来（能量 = σᵢ² 占比）</div>
+    <div class="canvaswrap">
+      <div class="canvasbox"><canvas class="plot" id="rank-orig" width="208" height="208"></canvas><div class="clabel">原图 M（16×16 灰度）</div></div>
+      <div class="canvasbox"><canvas class="plot" id="rank-recon" width="208" height="208"></canvas><div class="clabel">rank-k 重建</div></div>
+      <div class="canvasbox"><canvas class="plot" id="rank-curve" width="320" height="208"></canvas><div class="clabel">累计能量曲线</div></div>
+    </div>
+    <div class="readout" id="rank-readout" aria-live="polite"></div>
+    <div class="controls">
+      <div class="slider-row">k <input type="range" id="rank-k" min="1" max="16" step="1" value="4" aria-label="rank k"><span class="slider-val" id="rank-k-val">4</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SEC 5 : PCA ================= -->
+<section class="lens" id="sec-5">
+  <h2><span class="tag">05</span>PCA · 把前面全部串起来</h2>
+  <div class="prose">
+    <p>现在见证整条链合龙。PCA 的每一步都是前面的老熟人：</p>
+    <p><strong>①</strong> 数据中心化（每列减均值）；<strong>②</strong> 协方差矩阵 C = X<sup>T</sup>X/(n−1)——<strong>一个 Gram 矩阵</strong>（中心化列的全员相亲表，÷(n−1) 而已）；<strong>③</strong> 它是<strong>对称半正定</strong>的，所以它的二次型 x<sup>T</sup>Cx 是一个"数据椭球"；<strong>④</strong> 对椭球应用<strong>主轴定理</strong>：特征向量 = 主成分方向，特征值 = 各方向方差；<strong>⑤</strong> 这恰好就是对 X 做 <strong>SVD</strong> 的右奇异向量。五个概念，一条流水线。</p>
+  </div>
+  <div class="formula">X 中心化 → C = <span class="hl-g">X<sup>T</sup>X</span>/(n−1) → x<sup>T</sup>Cx 椭球 → 特征分解 → <span class="hl-p">主成分 = 方差最大的方向</span></div>
+  <div class="demo" id="demo-pca">
+    <div class="demo-title">playground — 拖 ρ 调数据相关性，看主成分轴如何跟着云团转；σᵢ² 占比就是"方差解释率"</div>
+    <div class="canvaswrap">
+      <div class="canvasbox"><canvas class="plot" id="pca-canvas" width="400" height="400"></canvas><div class="clabel">200 个样本点 + 主成分轴（长度 = 2σ）</div></div>
+    </div>
+    <div class="readout" id="pca-readout" aria-live="polite"></div>
+    <div class="controls">
+      <div class="slider-row">ρ <input type="range" id="pca-rho" min="-95" max="95" step="1" value="80" aria-label="相关系数"><span class="slider-val" id="pca-rho-val">0.80</span></div>
+      <button class="btn ghost" id="pca-regen" type="button">换一批数据</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SEC 6 : chain ================= -->
+<!-- ================= SEC 5B : teaching derivation ================= -->
+<section class="lens" id="sec-5b">
+  <h2><span class="tag">5B</span>PCA 与 SVD 的手算桥：从数据云到主轴</h2>
+  <div class="prose">
+    <p class="lead">前面的 interactive demo 让你“看见”椭圆和主轴；这一节把同一条路径慢慢算一遍。核心顺序是：<strong>先 center，再做 Gram，最后读 eigen-direction。</strong></p>
+    <h3>第一拍：数据先减去均值</h3>
+    <p>把每一行当成一个 sample、每一列当成一个 feature。取三个点 <code>(1, 1)</code>、<code>(2, 2)</code>、<code>(3, 3)</code>，均值是 <code>(2, 2)</code>，因此</p>
+    <div class="formula">X<sub>c</sub> = [ −1  −1 ; 0  0 ; 1  1 ]</div>
+    <p>为什么要 center？因为 PCA 想看的是“围绕中心的变化”，不是数据整体离原点有多远。没有 center，均值会把主轴方向拽偏。</p>
+    <h3>第二拍：covariance 就是一个缩放过的 Gram matrix</h3>
+    <div class="formula">C = X<sub>c</sub><sup>T</sup>X<sub>c</sub> / (N−1) = [ 1  1 ; 1  1 ]</div>
+    <p>对角线的 <code>1</code> 是两个 feature 各自的 variance；非对角线的 <code>1</code> 是它们一起增减的 covariance。这个例子中两列完全同向，所以 covariance 最大。</p>
+    <h3>第三拍：主成分是一个优化问题</h3>
+    <p>拿单位方向 <code>w</code> 去投影所有 sample，投影后的总平方长度是</p>
+    <div class="formula">‖X<sub>c</sub>w‖² = w<sup>T</sup>X<sub>c</sub><sup>T</sup>X<sub>c</sub>w = (N−1) w<sup>T</sup>Cw</div>
+    <p>要让它最大，就解</p>
+    <div class="formula">max<sub>‖w‖=1</sub> w<sup>T</sup>Cw　　⇒　　Cw = λw</div>
+    <p>所以 eigenvector 是主方向，eigenvalue 是沿该方向的 variance。对本例，</p>
+    <div class="formula">w<sub>1</sub> = (1,1)<sup>T</sup>/√2, λ<sub>1</sub>=2　　；　　w<sub>2</sub> = (1,−1)<sup>T</sup>/√2, λ<sub>2</sub>=0</div>
+    <p>数据只沿 diagonal 方向变化。沿 <code>w<sub>2</sub></code> 投影全部是零，所以压掉第二轴不会丢掉信息。</p>
+  </div>
+
+  <div class="two-up">
+    <div class="prose">
+      <h3>SVD 在这里做了什么？</h3>
+      <p>对 centered data 写 SVD：</p>
+      <div class="formula">X<sub>c</sub> = UΣV<sup>T</sup></div>
+      <p>再代入 covariance：</p>
+      <div class="formula">C = X<sub>c</sub><sup>T</sup>X<sub>c</sub>/(N−1) = VΣ<sup>2</sup>V<sup>T</sup>/(N−1)</div>
+      <p>于是 <code>V</code> 的 columns 正好是 PCA directions，<code>σ<sub>i</sub><sup>2</sup>/(N−1)</code> 正好是 PCA variances。PCA 从“找最大投影方差”进入，SVD 从“拆开 linear map”进入，最后在 <code>X<sub>c</sub><sup>T</sup>X<sub>c</sub></code> 汇合。</p>
+    </div>
+    <div class="prose">
+      <h3>为什么是 σ<sup>2</sup>，不是 σ？</h3>
+      <p>右 singular vector <code>v<sub>i</sub></code> 满足 <code>Av<sub>i</sub> = σ<sub>i</sub>u<sub>i</sub></code>；再左乘一次 <code>A<sup>T</sup></code>：</p>
+      <div class="formula">A<sup>T</sup>Av<sub>i</sub> = A<sup>T</sup>(σ<sub>i</sub>u<sub>i</sub>) = σ<sub>i</sub><sup>2</sup>v<sub>i</sub></div>
+      <p>因此 <code>v<sub>i</sub></code> 是 <code>A<sup>T</sup>A</code> 的 eigenvector，eigenvalue 是 <code>σ<sub>i</sub><sup>2</sup></code>。这就是 Gram、eigen-decomposition 和 SVD 之间最关键的一座桥。</p>
+    </div>
+  </div>
+
+  <div class="demo" id="demo-code-bridge">
+    <div class="demo-title">最小可运行 PyTorch：同一份 X 同时走 PCA 和 SVD</div>
+    <pre style="margin:0;white-space:pre-wrap;overflow:auto;background:#201f1b;color:#fff7e8;border-radius:9px;padding:16px;font:14px/1.65 var(--mono)"><code>import torch
+
+# 每行一个 sample，每列一个 feature
+X = torch.tensor([
+    [1.0, 1.0],
+    [2.0, 2.0],
+    [3.0, 3.0],
+])
+
+# 1) center：按 feature 减均值
+Xc = X - X.mean(dim=0, keepdim=True)
+
+# 2) Gram / covariance
+C = Xc.T @ Xc / (X.shape[0] - 1)
+
+# 3) covariance 的 eigen-decomposition
+eigvals, eigvecs = torch.linalg.eigh(C)
+order = torch.argsort(eigvals, descending=True)
+eigvals = eigvals[order]
+eigvecs = eigvecs[:, order]
+
+# 4) centered data 的 SVD
+U, S, Vh = torch.linalg.svd(Xc, full_matrices=False)
+
+print("PCA variances =", eigvals)
+print("S^2 / (N-1)  =", S.square() / (X.shape[0] - 1))
+print("PCA directions =", eigvecs)
+print("SVD directions =", Vh.T)</code></pre>
+    <div class="callout tone-b"><strong>运行结果怎么对：</strong>eigenvectors 与 <code>Vh.T</code> 可能整列差一个负号；这是同一条 axis 的两个朝向，不是数值错误。比较方向时看夹角或绝对值。</div>
+  </div>
+
+  <div class="prose">
+    <h3>四个最容易串味的词</h3>
+    <table style="width:100%;border-collapse:collapse;background:var(--panel);font-size:15px">
+      <tr><th style="text-align:left;padding:8px;border-bottom:1px solid var(--line)">词</th><th style="text-align:left;padding:8px;border-bottom:1px solid var(--line)">它在回答什么</th><th style="text-align:left;padding:8px;border-bottom:1px solid var(--line)">一句纠偏</th></tr>
+      <tr><td style="padding:8px;border-bottom:1px solid var(--line)"><code>A<sup>T</sup></code></td><td style="padding:8px;border-bottom:1px solid var(--line)">把 inner product 里的 map 搬到另一边</td><td style="padding:8px;border-bottom:1px solid var(--line)">是 adjoint，不等于 inverse</td></tr>
+      <tr><td style="padding:8px;border-bottom:1px solid var(--line)"><code>A<sup>T</sup>A</code></td><td style="padding:8px;border-bottom:1px solid var(--line)">columns 之间的两两 dot product</td><td style="padding:8px;border-bottom:1px solid var(--line)">对角线是 squared norm</td></tr>
+      <tr><td style="padding:8px;border-bottom:1px solid var(--line)">PCA</td><td style="padding:8px;border-bottom:1px solid var(--line)">哪根单位轴让投影 variance 最大</td><td style="padding:8px;border-bottom:1px solid var(--line)">covariance 前先 center</td></tr>
+      <tr><td style="padding:8px"><code>UΣV<sup>T</sup></code></td><td style="padding:8px">任意 linear map 的方向与拉伸账本</td><td style="padding:8px">右向量看输入，左向量看输出</td></tr>
+    </table>
+  </div>
+</section>
+
+
+<section class="lens" id="sec-6">
+  <h2><span class="tag">Σ</span>收拢：一条依赖链</h2>
+  <div class="prose">
+    <p>整篇可以压缩成一句话：<strong>转置给了内积的伴随，伴随的自乘给出 Gram 矩阵；Gram 对称半正定，于是二次型有碗可摆；主轴定理（谱定理）把碗摆正，摆正的一般化就是 SVD；把 SVD 应用到数据中心化后的 Gram 矩阵，就得到 PCA。</strong></p>
+  </div>
+  <div class="flowchain">
+    <div class="fnode"><div class="ft">A<sup>T</sup> 转置</div><div class="fd">内积的伴随：⟨Ax,y⟩ = ⟨x,A<sup>T</sup>y⟩</div></div>
+    <div class="farrow2">→</div>
+    <div class="fnode"><div class="ft">Gram A<sup>T</sup>A</div><div class="fd">列的全员相亲表；对称 + 半正定</div></div>
+    <div class="farrow2">→</div>
+    <div class="fnode"><div class="ft">二次型 x<sup>T</sup>Mx</div><div class="fd">碗还是鞍，看特征值符号</div></div>
+    <div class="farrow2">→</div>
+    <div class="fnode"><div class="ft">谱定理</div><div class="fd">对称矩阵可用特征向量对角化（摆正）</div></div>
+    <div class="farrow2">→</div>
+    <div class="fnode"><div class="ft">SVD</div><div class="fd">旋转 → 拉伸 → 旋转；按 σ 排序的 rank-1 地毯</div></div>
+    <div class="farrow2">→</div>
+    <div class="fnode"><div class="ft">PCA</div><div class="fd">协方差 Gram 矩阵的特征分解 = 方差最大方向</div></div>
+  </div>
+  <div class="callout tone-g">回到上篇的三副眼镜：<strong>点积视角</strong>长出了 Gram 矩阵，<strong>外积视角</strong>长出了 SVD 的地毯分解，<strong>复合视角</strong>长出了"旋转→拉伸→旋转"。六副眼镜没有一副是白戴的。</div>
+</section>
+
+</main>
+
+<footer>
+  <div>转置的深层含义 · Transpose → Gram → Quadratic Forms → SVD → PCA</div>
+  <div class="mono" style="margin-top:6px"><a href="matrix_multiplication_view.html">← 上篇：矩阵乘法的六副眼镜</a> · <a href="matrix_multiplication_perspectives_pca_svd.md">查看 Markdown 源稿</a> · interactive explainer · made by Ember</div>
+</footer>
+
+<script>
+/* ================= helpers ================= */
+const $ = s => document.querySelector(s);
+const randInt = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+const randMat = (r, c, lo = -3, hi = 4) =>
+  Array.from({ length: r }, () => Array.from({ length: c }, () => randInt(lo, hi)));
+const matMul = (A, B) => {
+  const m = A.length, r = B.length, n = B[0].length;
+  const C = Array.from({ length: m }, () => Array(n).fill(0));
+  for (let i = 0; i < m; i++) for (let j = 0; j < n; j++)
+    for (let k = 0; k < r; k++) C[i][j] += A[i][k] * B[k][j];
+  return C;
+};
+const transpose = A => A[0].map((_, j) => A.map(r => r[j]));
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+const sub = n => String(n).split('').map(d => '₀₁₂₃₄₅₆₇₈₉'[+d] ?? d).join('');
+const signed = v => (v < 0 ? `(${v})` : `${v}`);
+const f1 = v => (Math.abs(v) < 5e-3 ? 0 : v).toFixed(1);
+const f2 = v => (Math.abs(v) < 5e-4 ? 0 : v).toFixed(2);
+
+function renderMat(mat, label, labelCls, cellTag = 'div') {
+  const box = el('div', 'matbox');
+  const lab = el('div', 'mat-label', label);
+  if (labelCls) lab.style.color = labelCls;
+  box.appendChild(lab);
+  const grid = el('div', 'mat');
+  grid.style.gridTemplateColumns = `repeat(${mat[0].length}, var(--cs,44px))`;
+  const cells = mat.map(row => row.map(v => {
+    const c = el(cellTag, 'cell', v);
+    grid.appendChild(c);
+    return c;
+  }));
+  box.appendChild(grid);
+  return { wrap: box, cells, grid };
+}
+function opSym(t) { return el('div', 'op', t); }
+
+/* Jacobi eigenvalue solver for real symmetric matrices (Numerical-Recipes style).
+   Returns eigenvalues (desc) and eigenvectors as column arrays. */
+function jacobiEigen(Ain, maxSweeps = 100) {
+  const n = Ain.length;
+  const A = Ain.map(r => r.slice());
+  const V = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => i === j ? 1 : 0));
+  for (let sweep = 0; sweep < maxSweeps; sweep++) {
+    let off = 0;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) off += A[i][j] * A[i][j];
+    if (off < 1e-20) break;
+    for (let p = 0; p < n - 1; p++) for (let q = p + 1; q < n; q++) {
+      const apq = A[p][q];
+      if (Math.abs(apq) < 1e-13) continue;
+      const phi = (A[q][q] - A[p][p]) / (2 * apq);
+      const t = (phi >= 0 ? 1 : -1) / (Math.abs(phi) + Math.sqrt(phi * phi + 1));
+      const c = 1 / Math.sqrt(t * t + 1), s = t * c;
+      for (let k = 0; k < n; k++) {
+        const akp = A[k][p], akq = A[k][q];
+        A[k][p] = c * akp - s * akq; A[k][q] = s * akp + c * akq;
+      }
+      for (let k = 0; k < n; k++) {
+        const apk = A[p][k], aqk = A[q][k];
+        A[p][k] = c * apk - s * aqk; A[q][k] = s * apk + c * aqk;
+      }
+      for (let k = 0; k < n; k++) {
+        const vkp = V[k][p], vkq = V[k][q];
+        V[k][p] = c * vkp - s * vkq; V[k][q] = s * vkp + c * vkq;
+      }
+    }
+  }
+  const order = A.map((r, i) => i).sort((a, b) => A[b][b] - A[a][a]);
+  return {
+    values: order.map(i => A[i][i]),
+    vectors: order.map(i => V.map(r => r[i]))
+  };
+}
+
+/* SVD of a real m×n matrix via eigendecomposition of AᵀA. */
+function svd(A) {
+  const AtA = matMul(transpose(A), A);
+  const { values, vectors } = jacobiEigen(AtA, 200);
+  const sigmas = values.map(v => Math.sqrt(Math.max(v, 0)));
+  const V = vectors; // columns v_i as arrays
+  const U = V.map((v, i) => {
+    if (sigmas[i] > 1e-10) {
+      const Av = A.map(row => row.reduce((s, a, k) => s + a * v[k], 0));
+      return Av.map(x => x / sigmas[i]);
+    }
+    return A.map(() => 0);
+  });
+  return { U, sigmas, V };
+}
+
+/* 2×2 symmetric eigen (closed form): M=[[a,b],[b,c]] → {l1,l2,v1,v2} */
+function eigen2x2(a, b, c) {
+  const tr = a + c, det = a * c - b * b;
+  const disc = Math.sqrt(Math.max(0, (a - c) * (a - c) / 4 + b * b));
+  const l1 = tr / 2 + disc, l2 = tr / 2 - disc;
+  const eigvec = l => {
+    let vx = b, vy = l - a;
+    if (Math.hypot(vx, vy) < 1e-9) { vx = l - c; vy = b; }
+    if (Math.hypot(vx, vy) < 1e-9) return [1, 0];
+    const n = Math.hypot(vx, vy);
+    return [vx / n, vy / n];
+  };
+  let v1 = eigvec(l1), v2 = eigvec(l2);
+  // ensure v2 ⟂ v1
+  const d = v1[0] * v2[0] + v1[1] * v2[1];
+  v2 = [v2[0] - d * v1[0], v2[1] - d * v1[1]];
+  const n2 = Math.hypot(v2[0], v2[1]) || 1;
+  v2 = [v2[0] / n2, v2[1] / n2];
+  return { l1, l2, v1, v2, tr, det };
+}
+
+/* canvas drawing helpers */
+function setupCtx(canvas, domain) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const sx = W / (domain.xmax - domain.xmin), sy = H / (domain.ymax - domain.ymin);
+  const px = x => (x - domain.xmin) * sx;
+  const py = y => H - (y - domain.ymin) * sy;
+  return { ctx, W, H, px, py, sx, sy };
+}
+function drawGrid(g, domain, step = 1) {
+  const { ctx, px, py } = g;
+  ctx.strokeStyle = '#eee5d3'; ctx.lineWidth = 1;
+  for (let x = Math.ceil(domain.xmin); x <= domain.xmax; x += step) {
+    ctx.beginPath(); ctx.moveTo(px(x), 0); ctx.lineTo(px(x), g.H); ctx.stroke();
+  }
+  for (let y = Math.ceil(domain.ymin); y <= domain.ymax; y += step) {
+    ctx.beginPath(); ctx.moveTo(0, py(y)); ctx.lineTo(g.W, py(y)); ctx.stroke();
+  }
+  ctx.strokeStyle = '#c9bda4'; ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.moveTo(px(0), 0); ctx.lineTo(px(0), g.H); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, py(0)); ctx.lineTo(g.W, py(0)); ctx.stroke();
+}
+function drawArrow(g, x0, y0, x1, y1, color, lw = 2.5, dash) {
+  const { ctx, px, py } = g;
+  ctx.save();
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = lw;
+  if (dash) ctx.setLineDash(dash);
+  ctx.beginPath(); ctx.moveTo(px(x0), py(y0)); ctx.lineTo(px(x1), py(y1)); ctx.stroke();
+  ctx.setLineDash([]);
+  const ang = Math.atan2(py(y0) - py(y1), px(x1) - px(x0));
+  const hs = 8;
+  ctx.beginPath();
+  ctx.moveTo(px(x1), py(y1));
+  ctx.lineTo(px(x1) - hs * Math.cos(ang - 0.4), py(y1) + hs * Math.sin(ang - 0.4));
+  ctx.lineTo(px(x1) - hs * Math.cos(ang + 0.4), py(y1) + hs * Math.sin(ang + 0.4));
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function drawVecLabel(g, x, y, text, color, rot = 0) {
+  const { ctx, px, py } = g;
+  let lx = x, ly = y;
+  if (rot) { // rotate anchor slightly to avoid colliding with a nearby label
+    const cs = Math.cos(rot), sn = Math.sin(rot);
+    lx = x * cs - y * sn; ly = x * sn + y * cs;
+  }
+  const s = 1.13; // push label past the arrow tip
+  ctx.save(); ctx.fillStyle = color; ctx.font = '600 13px "IBM Plex Mono", monospace';
+  const tx = px(lx * s) - 6, ty = py(ly * s) - 6;
+  const tw = ctx.measureText(text).width;
+  ctx.fillText(text, Math.max(4, Math.min(tx, g.W - tw - 4)), Math.max(14, Math.min(ty, g.H - 6)));
+  ctx.restore();
+}
+
+/* ================= SEC 1 : adjoint identity ================= */
+const adjDemo = (() => {
+  const A = [[2, 1], [-1, 3]];
+  const At = transpose(A);
+  const stage = $('#adj-stage'), readout = $('#adj-readout');
+  const ids = ['adj-x1', 'adj-x2', 'adj-y1', 'adj-y2'];
+  const mA = renderMat(A, 'A', 'var(--row)');
+  const mAt = renderMat(At, 'Aᵀ', 'var(--col)');
+  stage.append(mA.wrap, opSym('vs'), mAt.wrap);
+
+  function paint() {
+    const [x1, x2, y1, y2] = ids.map(id => +$('#' + id).value);
+    ids.forEach(id => $('#' + id + '-val').textContent = $( '#' + id).value);
+    const x = [x1, x2], y = [y1, y2];
+    const Ax = [A[0][0] * x1 + A[0][1] * x2, A[1][0] * x1 + A[1][1] * x2];
+    const Aty = [At[0][0] * y1 + At[0][1] * y2, At[1][0] * y1 + At[1][1] * y2];
+    const lhs = Ax[0] * y[0] + Ax[1] * y[1];
+    const rhs = x[0] * Aty[0] + x[1] * Aty[1];
+    readout.innerHTML =
+      `x = (${x})，y = (${y})<br>` +
+      `左边：⟨Ax, y⟩ = (${Ax})·(${y}) = <span class="t-p">${lhs}</span><br>` +
+      `右边：⟨x, Aᵀy⟩ = (${x})·(${Aty}) = <span class="t-p">${rhs}</span>　` +
+      `<span class="t-g">✓ 永远相等</span> <span style="color:var(--ink-2)">—— A 搬过内积，代价就是变成 Aᵀ</span>`;
+  }
+  ids.forEach(id => $('#' + id).addEventListener('input', paint));
+  paint();
+})();
+
+/* ================= SEC 2 : Gram matrix ================= */
+const gramDemo = (() => {
+  let A, G, sel = { i: 0, j: 1 };
+  const stage = $('#gram-stage'), readout = $('#gram-readout');
+  let cellsA, cellsG;
+
+  function build() {
+    A = randMat(3, 3, -3, 4);
+    G = matMul(transpose(A), A);
+    stage.innerHTML = '';
+    const mA = renderMat(A, 'A（3 列）', 'var(--row)');
+    const mG = renderMat(G, 'G = AᵀA', 'var(--res)', 'button');
+    cellsA = mA.cells; cellsG = mG.cells;
+    stage.append(mA.wrap, opSym('→'), mG.wrap);
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+      const cell = cellsG[i][j];
+      cell.type = 'button';
+      cell.setAttribute('aria-label', `G 第 ${i + 1} 行第 ${j + 1} 列`);
+      ['mouseenter', 'focus', 'click'].forEach(ev =>
+        cell.addEventListener(ev, () => { sel = { i, j }; paint(); }));
+    }
+    paint();
+  }
+  function paint() {
+    const { i, j } = sel;
+    cellsA.flat().forEach(c => c.className = 'cell dim');
+    cellsG.flat().forEach(c => c.className = 'cell');
+    for (let k = 0; k < 3; k++) {
+      cellsA[k][i].className = 'cell hl-r';
+      cellsA[k][j].className = i === j ? 'cell hl-r' : 'cell hl-c';
+    }
+    cellsG[i][j].className = 'cell hl-p';
+    if (i !== j) cellsG[j][i].className = 'cell hl-p';
+    const ci = A.map(r => r[i]), cj = A.map(r => r[j]);
+    const terms = cj.map((v, k) => `<span class="t-r">${signed(ci[k])}</span>·<span class="t-c">${signed(v)}</span>`);
+    const prods = cj.map((v, k) => signed(ci[k] * v));
+    const mirror = i !== j ? `<br><span style="color:var(--ink-2)">镜像格 G${sub(j + 1)}${sub(i + 1)} 也同步高亮 —— 对称白送</span>` : `<br><span style="color:var(--ink-2)">对角线：第 ${i + 1} 列与自己的点积 = ‖a${sub(':' + (i + 1))}‖²</span>`;
+    readout.innerHTML =
+      `G${sub(i + 1)}${sub(j + 1)} = a${sub(':' + (i + 1))}ᵀ·a${sub(':' + (j + 1))} = ${terms.join(' + ')} = ${prods.join(' + ')} = <span class="t-p">${G[i][j]}</span>` + mirror;
+  }
+  $('#gram-regen').addEventListener('click', build);
+  build();
+})();
+/* ================= SEC 3 : quadratic form explorer ================= */
+const quadDemo = (() => {
+  const canvas = $('#quad-canvas'), readout = $('#quad-readout'), pill = $('#quad-pill');
+  const domain = { xmin: -3, xmax: 3, ymin: -3, ymax: 3 };
+  const ids = ['qa', 'qb', 'qc'];
+
+  function paint() {
+    const a = +$('#qa').value, b = +$('#qb').value, c = +$('#qc').value;
+    $('#qa-val').textContent = f1(a); $('#qb-val').textContent = f1(b); $('#qc-val').textContent = f1(c);
+    const { l1, l2, v1, v2 } = eigen2x2(a, b, c);
+    const g = setupCtx(canvas, domain);
+    const { ctx, W, H, px, py } = g;
+    const q = (x, y) => a * x * x + 2 * b * x * y + c * y * y;
+    // background + contours via pixel scan
+    const img = ctx.createImageData(W, H);
+    const vals = new Float32Array(W * H);
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+      const x = domain.xmin + i / W * 6, y = domain.ymax - j / H * 6;
+      vals[j * W + i] = q(x, y);
+    }
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+      const v = vals[j * W + i];
+      let R = 255, G = 255, B = 255;
+      if (v < 0) { R = 226; G = 239; B = 250; } // negative region tint
+      else if (v < 1) { R = 250; G = 247; B = 239; }
+      // contour q = 1 (pink) and q = -1 (blue)
+      const right = i + 1 < W ? vals[j * W + i + 1] : v;
+      const down = j + 1 < H ? vals[(j + 1) * W + i] : v;
+      const cross1 = (v - 1) * (right - 1) < 0 || (v - 1) * (down - 1) < 0;
+      const crossN = (v + 1) * (right + 1) < 0 || (v + 1) * (down + 1) < 0;
+      if (cross1) { R = 214; G = 51; B = 108; }
+      else if (crossN) { R = 47; G = 127; B = 196; }
+      const o = (j * W + i) * 4;
+      img.data[o] = R; img.data[o + 1] = G; img.data[o + 2] = B; img.data[o + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    drawGrid(g, domain);
+    // eigen axes with radius 1/sqrt(|λ|)
+    [[l1, v1, '#2b8a3e', 'λ₁'], [l2, v2, '#2f7fc4', 'λ₂']].forEach(([l, v, col, name]) => {
+      if (l > 1e-9) {
+        const r = 1 / Math.sqrt(l);
+        drawArrow(g, -v[0] * r, -v[1] * r, v[0] * r, v[1] * r, col, 2.5);
+        drawVecLabel(g, v[0] * r, v[1] * r, `${name}=${f2(l)}`, col);
+      } else if (l < -1e-9) {
+        const r = 1 / Math.sqrt(-l);
+        drawArrow(g, -v[0] * r, -v[1] * r, v[0] * r, v[1] * r, col, 2, [5, 4]);
+        drawVecLabel(g, v[0] * r, v[1] * r, `${name}=${f2(l)}`, col);
+      }
+    });
+    // verdict pill + readout
+    const eps = 1e-9;
+    let cls, txt, shape;
+    if (l2 > eps) { cls = 'pill pos'; txt = '正定 positive definite'; shape = '碗：等高线是一族椭圆，原点是最低点'; }
+    else if (l1 < -eps) { cls = 'pill neg'; txt = '负定 negative definite'; shape = '倒扣的碗：原点是最高点'; }
+    else if (l1 > eps && l2 < -eps) { cls = 'pill ind'; txt = '不定 indefinite'; shape = '马鞍：q = 1 与 q = −1 都是双曲线，两族渐近线方向互相穿过'; }
+    else { cls = 'pill semi'; txt = '半定 / 退化'; shape = '碗被压扁成凹槽（出现零特征值），等高线退化为平行直线对'; }
+    pill.className = cls; pill.textContent = txt;
+    readout.innerHTML =
+      `M = [[${f1(a)}, ${f1(b)}], [${f1(b)}, ${f1(c)}]]　` +
+      `λ₁ = <span class="t-g">${f2(l1)}</span>，λ₂ = <span class="t-c">${f2(l2)}</span>　` +
+      `det = ${f2(a * c - b * b)}<br>` +
+      `<span style="color:var(--ink-2)">${shape}。绿/蓝箭头 = 特征向量轴，长度 1/√λ —— 主轴定理把碗摆正。</span>`;
+  }
+  ids.forEach(id => $('#' + id).addEventListener('input', paint));
+  paint();
+})();
+
+/* ================= SEC 4A : SVD circle → ellipse ================= */
+const svdDemo = (() => {
+  const L = $('#svd-left'), R = $('#svd-right'), readout = $('#svd-readout');
+  const domain = { xmin: -2.5, xmax: 2.5, ymin: -2.5, ymax: 2.5 };
+  const ids = ['svd-a', 'svd-b', 'svd-c', 'svd-d', 'svd-theta'];
+
+  function paint() {
+    const a = +$('#svd-a').value, b = +$('#svd-b').value, c = +$('#svd-c').value, d = +$('#svd-d').value;
+    const th = +$('#svd-theta').value / 100;
+    $('#svd-a-val').textContent = f1(a); $('#svd-b-val').textContent = f1(b);
+    $('#svd-c-val').textContent = f1(c); $('#svd-d-val').textContent = f1(d);
+    $('#svd-theta-val').textContent = Math.round(th * 180 / Math.PI) + '°';
+    const A = [[a, b], [c, d]];
+    const { U, sigmas, V } = svd(A);
+    let [s1, s2] = sigmas;
+    let v1 = V[0], v2 = V[1], u1 = U[0], u2 = U[1];
+    if (s2 < 1e-9 && s1 > 1e-9) { u2 = [-u1[1], u1[0]]; }
+    if (s1 < 1e-9) { u1 = [1, 0]; u2 = [0, 1]; }
+    const circle = [];
+    for (let t = 0; t <= 64; t++) {
+      const ang = t / 64 * 2 * Math.PI;
+      circle.push([Math.cos(ang), Math.sin(ang)]);
+    }
+    const map = p => [a * p[0] + b * p[1], c * p[0] + d * p[1]];
+    const ellipse = circle.map(map);
+    const x = [Math.cos(th), Math.sin(th)];
+    const Ax = map(x);
+    // left
+    let g = setupCtx(L, domain);
+    g.ctx.clearRect(0, 0, g.W, g.H);
+    drawGrid(g, domain);
+    g.ctx.strokeStyle = '#c9bda4'; g.ctx.lineWidth = 2;
+    g.ctx.beginPath();
+    circle.forEach((p, i) => i ? g.ctx.lineTo(g.px(p[0]), g.py(p[1])) : g.ctx.moveTo(g.px(p[0]), g.py(p[1])));
+    g.ctx.stroke();
+    drawArrow(g, 0, 0, v1[0], v1[1], '#e8890c', 3); drawVecLabel(g, v1[0], v1[1], 'v₁', '#e8890c');
+    drawArrow(g, 0, 0, v2[0], v2[1], '#2f7fc4', 3); drawVecLabel(g, v2[0], v2[1], 'v₂', '#2f7fc4');
+    drawArrow(g, 0, 0, x[0], x[1], '#d6336c', 2.5); drawVecLabel(g, x[0], x[1], 'x', '#d6336c', 0.28);
+    // right
+    g = setupCtx(R, domain);
+    g.ctx.clearRect(0, 0, g.W, g.H);
+    drawGrid(g, domain);
+    g.ctx.strokeStyle = '#d6336c'; g.ctx.lineWidth = 2;
+    g.ctx.beginPath();
+    ellipse.forEach((p, i) => i ? g.ctx.lineTo(g.px(p[0]), g.py(p[1])) : g.ctx.moveTo(g.px(p[0]), g.py(p[1])));
+    g.ctx.stroke();
+    const s1u1 = [s1 * u1[0], s1 * u1[1]], s2u2 = [s2 * u2[0], s2 * u2[1]];
+    drawArrow(g, 0, 0, s1u1[0], s1u1[1], '#e8890c', 3); drawVecLabel(g, s1u1[0], s1u1[1], `σ₁u₁=${f2(s1)}u₁`, '#e8890c');
+    drawArrow(g, 0, 0, s2u2[0], s2u2[1], '#2f7fc4', 3); drawVecLabel(g, s2u2[0], s2u2[1], `σ₂u₂=${f2(s2)}u₂`, '#2f7fc4');
+    drawArrow(g, 0, 0, Ax[0], Ax[1], '#d6336c', 2.5, [5, 4]); drawVecLabel(g, Ax[0], Ax[1], 'Ax', '#d6336c', 0.28);
+    const det = a * d - b * c;
+    readout.innerHTML =
+      `A = [[${f1(a)}, ${f1(b)}], [${f1(c)}, ${f1(d)}]]　σ₁ = <span class="t-r">${f2(s1)}</span>，σ₂ = <span class="t-c">${f2(s2)}</span>，` +
+      `|det A| = ${f2(Math.abs(det))} = σ₁σ₂ ✓<br>` +
+      `<span style="color:var(--ink-2)">vᵢ 先被转到坐标轴方向、被 σᵢ 拉伸、再被转到 uᵢ：旋转 → 拉伸 → 旋转，接力完成。` +
+      `当前 x = (${f2(x[0])}, ${f2(x[1])})，Ax = (${f2(Ax[0])}, ${f2(Ax[1])})。</span>`;
+  }
+  ids.forEach(id => $('#' + id).addEventListener('input', paint));
+  paint();
+})();
+
+/* ================= SEC 4B : rank-k approximation ================= */
+const rankDemo = (() => {
+  const N = 16;
+  const M = Array.from({ length: N }, (_, i) => Array.from({ length: N }, (_, j) => {
+    const g1 = 205 * Math.exp(-((i - 5.5) ** 2 + (j - 5.5) ** 2) / 9);
+    const g2 = 165 * Math.exp(-((i - 11) ** 2 + (j - 10.5) ** 2) / 6);
+    const ring = 90 * Math.exp(-((Math.hypot(i - 8, j - 8) - 6) ** 2) / 2.5);
+    return Math.max(0, Math.min(255, 30 + g1 + g2 + ring));
+  }));
+  const { U, sigmas, V } = svd(M);
+  const total = sigmas.reduce((s, x) => s + x * x, 0);
+  const normM = Math.sqrt(M.flat().reduce((s, x) => s + x * x, 0));
+  const kSlider = $('#rank-k'), readout = $('#rank-readout');
+
+  function recon(k) {
+    const R = Array.from({ length: N }, () => Array(N).fill(0));
+    for (let t = 0; t < k; t++) {
+      const s = sigmas[t];
+      for (let i = 0; i < N; i++) for (let j = 0; j < N; j++)
+        R[i][j] += s * U[t][i] * V[t][j];
+    }
+    return R;
+  }
+  function drawImage(canvas, Mat) {
+    const ctx = canvas.getContext('2d');
+    const cell = canvas.width / N;
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+      const v = Math.max(0, Math.min(255, Mat[i][j]));
+      ctx.fillStyle = `rgb(${v | 0},${v | 0},${v | 0})`;
+      ctx.fillRect(j * cell, i * cell, cell + 0.5, cell + 0.5);
+    }
+  }
+  function drawCurve(k) {
+    const canvas = $('#rank-curve');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+    const pad = 30, iw = W - pad - 14, ih = H - pad - 20;
+    ctx.strokeStyle = '#c9bda4'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(pad, pad - 8); ctx.lineTo(pad, pad + ih); ctx.lineTo(pad + iw, pad + ih); ctx.stroke();
+    ctx.fillStyle = '#5c564a'; ctx.font = '11px "IBM Plex Mono", monospace';
+    ctx.fillText('100%', 4, pad + 4);
+    ctx.fillText('k →', W - 34, H - 6);
+    let cum = 0;
+    const pts = sigmas.map(s => { cum += s * s; return cum / total; });
+    ctx.strokeStyle = '#d6336c'; ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const X = pad + (i + 1) / N * iw, Y = pad + (1 - p) * ih;
+      i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
+    });
+    ctx.stroke();
+    const Xk = pad + k / N * iw, Yk = pad + (1 - pts[k - 1]) * ih;
+    ctx.strokeStyle = '#2f7fc4'; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(Xk, pad + ih); ctx.lineTo(Xk, Yk); ctx.lineTo(pad, Yk); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#2f7fc4';
+    ctx.beginPath(); ctx.arc(Xk, Yk, 4, 0, 7); ctx.fill();
+  }
+  function paint() {
+    const k = +kSlider.value;
+    $('#rank-k-val').textContent = k;
+    drawImage($('#rank-orig'), M);
+    const R = recon(k);
+    drawImage($('#rank-recon'), R);
+    let err = 0;
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) err += (M[i][j] - R[i][j]) ** 2;
+    err = Math.sqrt(err) / normM;
+    let cum = 0;
+    for (let t = 0; t < k; t++) cum += sigmas[t] ** 2;
+    drawCurve(k);
+    readout.innerHTML =
+      `k = <span class="t-p">${k}</span> / 16　累计能量 Σσᵢ² 占比 = <span class="t-g">${(cum / total * 100).toFixed(1)}%</span>　` +
+      `相对误差 ‖M−M_k‖/‖M‖ = <span class="t-p">${(err * 100).toFixed(1)}%</span><br>` +
+      `<span style="color:var(--ink-2)">σ 从 ${f2(sigmas[0])} 衰减到 ${f2(sigmas[15])} —— 前几条地毯就扛起了大部分图像，这就是最优低秩近似（Eckart–Young）。</span>`;
+  }
+  kSlider.addEventListener('input', paint);
+  paint();
+})();
+
+/* ================= SEC 5 : PCA ================= */
+const pcaDemo = (() => {
+  const canvas = $('#pca-canvas'), readout = $('#pca-readout');
+  const domain = { xmin: -3.5, xmax: 3.5, ymin: -3.5, ymax: 3.5 };
+  const NPTS = 200;
+  let zs = [];
+  function randn() {
+    let u = 0, v = 0;
+    while (!u) u = Math.random();
+    while (!v) v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+  function regen() { zs = Array.from({ length: NPTS }, () => [randn(), randn()]); paint(); }
+  function paint() {
+    const rho = +$('#pca-rho').value / 100;
+    $('#pca-rho-val').textContent = rho.toFixed(2);
+    const pts = zs.map(([z1, z2]) => [z1 * 1.5, rho * z1 * 1.5 / 1 + Math.sqrt(1 - rho * rho) * z2]);
+    // covariance
+    const mx = pts.reduce((s, p) => s + p[0], 0) / NPTS, my = pts.reduce((s, p) => s + p[1], 0) / NPTS;
+    let sxx = 0, sxy = 0, syy = 0;
+    pts.forEach(([x, y]) => { sxx += (x - mx) ** 2; sxy += (x - mx) * (y - my); syy += (y - my) ** 2; });
+    sxx /= NPTS - 1; sxy /= NPTS - 1; syy /= NPTS - 1;
+    const { l1, l2, v1, v2 } = eigen2x2(sxx, sxy, syy);
+    const g = setupCtx(canvas, domain);
+    const { ctx, px, py } = g;
+    ctx.clearRect(0, 0, g.W, g.H);
+    drawGrid(g, domain);
+    ctx.fillStyle = 'rgba(28,26,22,.5)';
+    pts.forEach(([x, y]) => { ctx.beginPath(); ctx.arc(px(x), py(y), 2.4, 0, 7); ctx.fill(); });
+    const r1 = 2 * Math.sqrt(Math.max(l1, 0)), r2 = 2 * Math.sqrt(Math.max(l2, 0));
+    drawArrow(g, mx - v1[0] * r1, my - v1[1] * r1, mx + v1[0] * r1, my + v1[1] * r1, '#d6336c', 3);
+    drawVecLabel(g, mx + v1[0] * r1, my + v1[1] * r1, 'PC1', '#d6336c');
+    drawArrow(g, mx - v2[0] * r2, my - v2[1] * r2, mx + v2[0] * r2, my + v2[1] * r2, '#2b8a3e', 3, [6, 4]);
+    drawVecLabel(g, mx + v2[0] * r2, my + v2[1] * r2, 'PC2', '#2b8a3e');
+    const ratio = l1 / (l1 + l2) * 100;
+    readout.innerHTML =
+      `协方差 C = [[${f2(sxx)}, ${f2(sxy)}], [${f2(sxy)}, ${f2(syy)}]]（= XᵀX/(n−1)，Gram！）<br>` +
+      `λ₁ = <span class="t-p">${f2(l1)}</span>（PC1 方向方差），λ₂ = <span class="t-g">${f2(l2)}</span>　→　` +
+      `PC1 方差解释率 = <span class="t-p">${ratio.toFixed(1)}%</span>`;
+  }
+  $('#pca-rho').addEventListener('input', paint);
+  $('#pca-regen').addEventListener('click', regen);
+  regen();
+})();
+</script>
+</body>
+</html>

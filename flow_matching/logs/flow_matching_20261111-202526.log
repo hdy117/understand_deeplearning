@@ -1,0 +1,5 @@
+2026-11-11 20:25:26.809 | INFO     | __main__:<module>:19 | py file path:/shared_disk_e/git/understand_deeplearning/flow_matching/config.py
+2026-11-11 20:25:27.007 | INFO     | __main__:__post_init__:79 | self.data_dir:/shared_disk_e/git/understand_deeplearning/flow_matching/data
+2026-11-11 20:25:27.007 | INFO     | __main__:__post_init__:80 | self.train_dir:/shared_disk_e/git/understand_deeplearning/flow_matching/data/train
+2026-11-11 20:25:27.007 | INFO     | __main__:__post_init__:81 | self.test_dir:/shared_disk_e/git/understand_deeplearning/flow_matching/data/test
+2026-11-11 20:25:27.008 | INFO     | __main__:<module>:92 | FMConfig(train_cfg=TrainConfig(epoches=1000, batch_size=64, lr=0.001, scheduler=None, optimizer=None), data_cfg=FMDataConfig(data_dir=PosixPath('/shared_disk_e/git/understand_deeplearning/flow_matching/data'), train_dir='/shared_disk_e/git/understand_deeplearning/flow_matching/data/train', test_dir='/shared_disk_e/git/understand_deeplearning/flow_matching/data/test'))
