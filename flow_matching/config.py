@@ -50,7 +50,7 @@ class FMDataConfig:
         """calculate train_dir and test_dir based on data_dir at post init stage
 
         Args:
-            data_dir (_type_): _description_
+            data_dir (_type_): train or test data dir
 
         Raises:
             InvalidFileException: _description_

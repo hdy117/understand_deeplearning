@@ -52,7 +52,7 @@ class ImgDataset(Dataset):
         )
 
     def __len__(self) -> int:
-        len(self.date_list)
+        return len(self.date_list)
 
     def __getitem__(self, index) -> tuple[torch.Tensor, torch.Tensor]:
         # {"category":"", "path":""}
@@ -87,3 +87,12 @@ if __name__ == "__main__":
     img_tensor, label_one_hot_tensor = img_train_dataset.__getitem__(20)
     logger.info(f"{img_tensor}")
     logger.info(f"{label_one_hot_tensor}")
+    logger.info(f"total len:{img_train_dataset.__len__()}")
+    logger.info(f"total len:{img_test_dataset.__len__()}")
+
+    train_data_loader = DataLoader(
+        dataset=img_train_dataset, batch_size=4, shuffle=True
+    )
+
+    for index, (img_batch, label_batch) in enumerate(train_data_loader):
+        logger.info(f"img_batch:{img_batch.shape}")
