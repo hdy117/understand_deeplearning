@@ -24,11 +24,7 @@ class DiTTrainConfig:
     lr: float = 1e-3
     device = DEVICE
     img_size: int = IMG_SIZE
-
     num_workers: int = 16
-    persist_worker: int = 1
-    pin_memory = DEVICE
-
     seed: int = 42
 
 
@@ -75,9 +71,9 @@ class DataConfig:
 
 
 @dataclass
-class ModelConfig:
-    d_model: int = 256
-    n_layer: int = 12
+class DiTModelConfig:
+    d_model: int = 4 * 8 * 8  # from VAE latent size
+    n_layer: int = 6
     n_head: int = 8
     total_steps: int = 24
     category_num: int = DataConfig.category_num

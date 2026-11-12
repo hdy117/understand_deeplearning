@@ -7,7 +7,7 @@ logger = get_logger()
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from config import ModelConfig, DEVICE, IMG_SIZE
+from config import DiTModelConfig, DEVICE, IMG_SIZE
 
 
 class Img2Tokens(nn.Module):
@@ -51,8 +51,8 @@ class Img2Tokens(nn.Module):
         return img_tokens
 
 
-class FMNet(nn.Module):
-    def __init__(self, model_config: ModelConfig = ModelConfig(), device=DEVICE):
+class FlowMatching(nn.Module):
+    def __init__(self, model_config: DiTModelConfig = DiTModelConfig(), device=DEVICE):
         super().__init__()
         self.d_model: int = model_config.d_model  # model dim
         self.n_layer: int = model_config.n_layer  # layer of model
@@ -168,8 +168,8 @@ class FMNet(nn.Module):
 
 
 if __name__ == "__main__":
-    model_cfg = ModelConfig()
-    flow_matching_net = FMNet(model_config=model_cfg)
+    model_cfg = DiTModelConfig()
+    flow_matching_net = FlowMatching(model_config=model_cfg)
     flow_matching_net = flow_matching_net.to(device="cuda")
     x1 = torch.randn(size=[64, 32, model_cfg.d_model])
     x1 = x1.to(device="cuda")
