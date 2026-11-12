@@ -29,6 +29,7 @@ __all__ = [
     "logger",
     "setup_logger",
     "get_logger",
+    "Timer",
     "log_time",
     "LOG_FILE",
     "DEFAULT_LOG_DIR",
@@ -132,6 +133,57 @@ def get_logger() -> loguru.Logger:
     return logger
 
 
+class Timer:
+    """用 ``time.perf_counter()`` 测量一段代码的墙上时间。
+
+    既可以手动开始和停止，也可以作为上下文管理器使用::
+
+        timer = Timer()
+        timer.start()
+        ...
+        elapsed = timer.stop()
+
+        with Timer() as timer:
+            ...
+        print(timer.elapsed)
+
+    计时单位是秒。``elapsed`` 在停止前为 ``None``。同一个实例可以重复使用；
+    新的 ``start()`` 会清空上一次的结果。重复启动、未启动就停止或重复停止时
+    会抛出 ``RuntimeError``，避免静默返回错误读数。
+    """
+
+    def __init__(self) -> None:
+        self._started_at: float | None = None
+        self._elapsed: float | None = None
+
+    @property
+    def elapsed(self) -> float | None:
+        """最近一次完整计时的秒数；尚未停止时为 ``None``。"""
+        return self._elapsed
+
+    def start(self) -> "Timer":
+        """开始一次新计时，并返回自身以便链式调用。"""
+        if self._started_at is not None:
+            raise RuntimeError("计时已经开始，请先调用 stop()")
+        self._started_at = time.perf_counter()
+        self._elapsed = None
+        return self
+
+    def stop(self) -> float:
+        """停止计时并返回本次耗时，单位为秒。"""
+        if self._started_at is None:
+            raise RuntimeError("计时尚未开始")
+        self._elapsed = time.perf_counter() - self._started_at
+        self._started_at = None
+        return self._elapsed
+
+    def __enter__(self) -> "Timer":
+        return self.start()
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        self.stop()
+
+
 @contextmanager
 def log_time(action: str, level: str = "INFO") -> Iterator[None]:
     """记录一段代码的耗时；抛异常时记 ``exception`` 并原样抛出。
@@ -170,6 +222,10 @@ if __name__ == "__main__":
 
     with log_time("模拟一个 epoch"):
         time.sleep(0.25)
+
+    with Timer() as timer:
+        time.sleep(0.25)
+    logger.info("Timer 示例耗时：{:.3f} s", timer.elapsed)
 
     try:
         1 / 0

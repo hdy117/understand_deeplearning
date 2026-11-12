@@ -1,16 +1,11 @@
 """训练配置：dataclass 的典型用法 —— 只声明字段，行为由装饰器生成。"""
 
-import dataclasses
 from dataclasses import dataclass, field
-from enum import Enum
+from typing import ClassVar
 from plistlib import InvalidFileException
-from cv2 import log
 import torch
-import torch.nn as nn
 from pathlib import Path
 import os
-from traitlets import default
-import loguru
 
 from utils import get_logger
 
@@ -18,13 +13,15 @@ logger = get_logger()
 
 logger.info(f"py file path:{__file__}")
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
 
 @dataclass
 class TrainConfig:
     epoches: int = 1000
     batch_size: int = 64
     lr: float = 1e-3
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = DEVICE
     scheduler: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts | None = None
     optimizer: torch.optim.AdamW | None = None
 
@@ -41,10 +38,11 @@ class TrainConfig:
 
 
 @dataclass
-class FMDataConfig:
+class DataConfig:
     data_dir: str = field(default=Path(__file__).parent / "data", init=True)
     train_dir: str | None = field(default="train", init=False)
     test_dir: str | None = field(default="test", init=False)
+    category_num: ClassVar[int] = 10  # num of categories
 
     def __post_init__(self) -> None:
         """calculate train_dir and test_dir based on data_dir at post init stage
@@ -82,9 +80,18 @@ class FMDataConfig:
 
 
 @dataclass
+class ModelConfig:
+    d_model: int = 256
+    n_layer: int = 12
+    n_head: int = 8
+    total_steps: int = 24
+    category_num: int = DataConfig.category_num
+
+
+@dataclass
 class FMConfig:
     train_cfg: TrainConfig = field(default_factory=TrainConfig)
-    data_cfg: FMDataConfig = field(default_factory=FMDataConfig)
+    data_cfg: DataConfig = field(default_factory=DataConfig)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,11 @@
-from utils import get_logger
+from utils import get_logger, Timer
 from torch.utils.data import DataLoader, Dataset
 import os
 import config
 import torch
 from PIL import Image
 import numpy as np
+import torchvision
 
 logger = get_logger()
 
@@ -24,7 +25,7 @@ class ImgDataset(Dataset):
         logger.info(f"data_dir:{self.data_dir}")
 
         # data list, [{"category":"", "path":""}]
-        self.date_list: list = []
+        self.data_list: list = []
         self.category_set: set[str] = []
 
         # list all dir under self.data_dir
@@ -38,10 +39,10 @@ class ImgDataset(Dataset):
                 one_pair_data: dict = {}  # {"category":"", "path":""}
                 one_pair_data["path"] = os.path.join(category_full_path, img_file)
                 one_pair_data["category"] = category_dir
-                self.date_list.append(one_pair_data)
+                self.data_list.append(one_pair_data)
 
         # check
-        if self.date_list.__len__() <= 0:
+        if self.data_list.__len__() <= 0:
             err: str = f"no category dir in {self.data_dir}"
             logger.error(err)
             raise FileNotFoundError(err)
@@ -50,49 +51,66 @@ class ImgDataset(Dataset):
         logger.info(
             f"category list:{self.category_set}\ntotal category num:{self.category_num}"
         )
+        self.category_to_index: dict = {
+            name: index for index, name in enumerate(self.category_set)
+        }
+        logger.info(f"{self.category_to_index}")
 
     def __len__(self) -> int:
-        return len(self.date_list)
+        return len(self.data_list)
 
     def __getitem__(self, index) -> tuple[torch.Tensor, torch.Tensor]:
         # {"category":"", "path":""}
-        one_pair_data = self.date_list[index]
-        array = None
+        one_pair_data = self.data_list[index]
+        image_tensor = None
+        # load image
+        try:
+            image_tensor = torchvision.io.read_image(one_pair_data["path"]) / 255.5
+        except Exception as e:
+            logger.error(f"error:{str(e)}")
 
-        with Image.open(one_pair_data["path"]) as img:
-            image: Image.Image = img.convert("RGB")
-            array = np.asarray(image)
-
-        if array is None:
-            raise f"fail to load image {one_pair_data["path"]}"
+        if image_tensor is None:
+            raise RuntimeError(f"fail to load image {one_pair_data["path"]}")
         # from HWC to CHW, and normalize
-        img_tensor: torch.Tensor = torch.from_numpy(array).permute(2, 0, 1) / 255.0
         label_one_hot: torch.Tensor = self.label_2_one_hot(one_pair_data["category"])
-        return img_tensor, label_one_hot
+        return image_tensor, label_one_hot
 
     def label_2_one_hot(self, label: str = "airplane") -> torch.Tensor:
         one_hot_tensor: torch.Tensor = torch.zeros(size=[self.category_num])
 
         if label in self.category_set:
-            index = self.category_set.index(label)
-            one_hot_tensor[index] = 1.0
+            one_hot_tensor[self.category_to_index[label]] = 1.0
         return one_hot_tensor
 
 
 if __name__ == "__main__":
-    fm_data_cfg = config.FMDataConfig()
+    fm_data_cfg = config.DataConfig()
     img_train_dataset = ImgDataset(fm_data_cfg.train_dir)
     img_test_dataset = ImgDataset(fm_data_cfg.test_dir)
 
     img_tensor, label_one_hot_tensor = img_train_dataset.__getitem__(20)
     logger.info(f"{img_tensor}")
     logger.info(f"{label_one_hot_tensor}")
+    logger.info(f"{img_tensor.shape}")
+    logger.info(f"{label_one_hot_tensor.shape}")
     logger.info(f"total len:{img_train_dataset.__len__()}")
     logger.info(f"total len:{img_test_dataset.__len__()}")
 
     train_data_loader = DataLoader(
-        dataset=img_train_dataset, batch_size=4, shuffle=True
+        dataset=img_train_dataset,
+        batch_size=64,
+        shuffle=True,
+        num_workers=16,
+        prefetch_factor=8,
+        persistent_workers=16,
     )
 
+    timer = Timer()
+    timer.start()
     for index, (img_batch, label_batch) in enumerate(train_data_loader):
-        logger.info(f"img_batch:{img_batch.shape}")
+        # logger.info(f"img_batch:{img_batch.shape}")
+        img_batch
+        label_batch
+
+    elapsed = timer.stop()
+    logger.info(f"elapsed {elapsed} while loop all train dataset")
