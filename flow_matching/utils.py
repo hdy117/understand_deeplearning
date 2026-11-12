@@ -1,4 +1,4 @@
-"""日志工具：基于 loguru，一次配置，控制台 + 文件双写。
+"""日志工具：基于 loguru,一次配置,控制台 + 文件双写。
 
 用法
 ----
@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import sys
 import time
+import random
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, TextIO
 
 import loguru
+import torch
 from loguru import logger
 
 __all__ = [
@@ -31,6 +33,7 @@ __all__ = [
     "get_logger",
     "Timer",
     "log_time",
+    "set_seed",
     "LOG_FILE",
     "DEFAULT_LOG_DIR",
 ]
@@ -44,7 +47,7 @@ _CONSOLE_FORMAT = (
     "<level>{level: <8}</level> | "
     "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
 )
-#: 文件格式：纯文本，方便 grep
+#: 文件格式：纯文本,方便 grep
 _FILE_FORMAT = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message}"
 
 #: 当前日志文件路径（未启用文件 sink 时为 None）
@@ -69,28 +72,28 @@ def setup_logger(
 ) -> "logger.__class__":
     """装配日志 sink（输出目的地）：控制台一个、文件一个。
 
-    ``loguru`` 自带一个 stderr sink，先 ``remove()`` 再重装，所以重复调用
-    不会出现日志翻倍，最后一次调用生效（等价于幂等 + force）。
+    ``loguru`` 自带一个 stderr sink,先 ``remove()`` 再重装,所以重复调用
+    不会出现日志翻倍,最后一次调用生效（等价于幂等 + force）。
 
     参数
     ----
-    log_dir:   日志目录，``None`` 表示只输出到控制台。
-    level:     最低级别，``"DEBUG"`` / ``"INFO"`` / ``"WARNING"`` ...
-    filename:  文件名，缺省 ``<name>_{time:YYYYMMDD-HHmmss}.log``；
+    log_dir:   日志目录,``None`` 表示只输出到控制台。
+    level:     最低级别,``"DEBUG"`` / ``"INFO"`` / ``"WARNING"`` ...
+    filename:  文件名,缺省 ``<name>_{time:YYYYMMDD-HHmmss}.log``;
                保留 ``{time:...}`` 占位符则每次运行自动新建文件。
-    rotation:  单个文件的条件，``"10 MB"`` / ``"1 day"`` / ``"00:00"``。
-    retention: 旧文件保留策略，``"10 days"`` / ``"1 month"`` / ``5``。
-    compression: 旧文件压缩格式，``"zip"`` / ``"gz"`` / ``None``。
+    rotation:  单个文件的条件,``"10 MB"`` / ``"1 day"`` / ``"00:00"``。
+    retention: 旧文件保留策略,``"10 days"`` / ``"1 month"`` / ``5``。
+    compression: 旧文件压缩格式,``"zip"`` / ``"gz"`` / ``None``。
     enqueue:   多进程/多线程安全写文件（训练常用 DataLoader worker）。
     colorize:  ``None`` 自动判断是否 TTY。
 
     返回
     ----
-    loguru 的 ``logger``，可直接 ``logger.info(...)``。
+    loguru 的 ``logger``,可直接 ``logger.info(...)``。
     """
     global LOG_FILE, _configured
 
-    logger.remove()  # 去掉 loguru 默认 sink，避免重复输出
+    logger.remove()  # 去掉 loguru 默认 sink,避免重复输出
 
     if console:
         logger.add(
@@ -127,16 +130,24 @@ def setup_logger(
 
 
 def get_logger() -> loguru.Logger:
-    """取 logger；若尚未配置，先用默认参数初始化一次。"""
+    """取 logger;若尚未配置,先用默认参数初始化一次。"""
     if not _configured:
         setup_logger()
     return logger
 
 
+def set_seed(seed: int) -> None:
+    """固定 Python 与 PyTorch 的随机种子,让训练尽量可复现。"""
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 class Timer:
     """用 ``time.perf_counter()`` 测量一段代码的墙上时间。
 
-    既可以手动开始和停止，也可以作为上下文管理器使用::
+    既可以手动开始和停止,也可以作为上下文管理器使用::
 
         timer = Timer()
         timer.start()
@@ -147,9 +158,9 @@ class Timer:
             ...
         print(timer.elapsed)
 
-    计时单位是秒。``elapsed`` 在停止前为 ``None``。同一个实例可以重复使用；
+    计时单位是秒。``elapsed`` 在停止前为 ``None``。同一个实例可以重复使用;
     新的 ``start()`` 会清空上一次的结果。重复启动、未启动就停止或重复停止时
-    会抛出 ``RuntimeError``，避免静默返回错误读数。
+    会抛出 ``RuntimeError``,避免静默返回错误读数。
     """
 
     def __init__(self) -> None:
@@ -158,19 +169,19 @@ class Timer:
 
     @property
     def elapsed(self) -> float | None:
-        """最近一次完整计时的秒数；尚未停止时为 ``None``。"""
+        """最近一次完整计时的秒数;尚未停止时为 ``None``。"""
         return self._elapsed
 
     def start(self) -> "Timer":
-        """开始一次新计时，并返回自身以便链式调用。"""
+        """开始一次新计时,并返回自身以便链式调用。"""
         if self._started_at is not None:
-            raise RuntimeError("计时已经开始，请先调用 stop()")
+            raise RuntimeError("计时已经开始,请先调用 stop()")
         self._started_at = time.perf_counter()
         self._elapsed = None
         return self
 
     def stop(self) -> float:
-        """停止计时并返回本次耗时，单位为秒。"""
+        """停止计时并返回本次耗时,单位为秒。"""
         if self._started_at is None:
             raise RuntimeError("计时尚未开始")
         self._elapsed = time.perf_counter() - self._started_at
@@ -186,11 +197,11 @@ class Timer:
 
 @contextmanager
 def log_time(action: str, level: str = "INFO") -> Iterator[None]:
-    """记录一段代码的耗时；抛异常时记 ``exception`` 并原样抛出。
+    """记录一段代码的耗时;抛异常时记 ``exception`` 并原样抛出。
 
     >>> with log_time("训练 1 个 epoch"):
     ...     ...
-    2026-11-11 15:02:01.123 | INFO | utils:log_time:78 | 完成：训练 1 个 epoch，耗时 1.234 s
+    2026-11-11 15:02:01.123 | INFO | utils:log_time:78 | 完成：训练 1 个 epoch,耗时 1.234 s
     """
     start = time.perf_counter()
     logger.debug("开始：{}", action)
@@ -216,7 +227,7 @@ if __name__ == "__main__":
         log_dir=DEFAULT_LOG_DIR, level="DEBUG", filename="demo.log", rotation="5 MB"
     )
 
-    logger.debug("DEBUG：变量细节只进文件也无所谓，级别是可调的")
+    logger.debug("DEBUG：变量细节只进文件也无所谓,级别是可调的")
     logger.info("INFO：日志系统就绪")
     logger.warning("WARNING：显存快满了 (98%)")
 
@@ -233,5 +244,5 @@ if __name__ == "__main__":
         # 比 logger.exception 更省事：装饰器 @logger.catch 也能自动兜住
         logger.exception("ERROR：捕获异常并记录 traceback")
 
-    logger.success("SUCCESS：这是 loguru 自带的级别，很好用")
+    logger.success("SUCCESS：这是 loguru 自带的级别,很好用")
     print(f"\n日志文件：{LOG_FILE}")

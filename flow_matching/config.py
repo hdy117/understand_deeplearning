@@ -14,14 +14,16 @@ logger = get_logger()
 logger.info(f"py file path:{__file__}")
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+IMG_SIZE: int = 64
 
 
 @dataclass
 class TrainConfig:
-    epoches: int = 1000
+    epoches: int = 30
     batch_size: int = 64
     lr: float = 1e-3
     device = DEVICE
+    img_size: int = IMG_SIZE
     scheduler: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts | None = None
     optimizer: torch.optim.AdamW | None = None
 
@@ -89,9 +91,40 @@ class ModelConfig:
 
 
 @dataclass
+class VAEConfig:
+    """VAE architecture; the latent layout is part of the model interface."""
+
+    in_channels: int = 3
+    latent_channels: int = 4
+    hidden_channels: tuple[int, int, int, int] = (32, 64, 128, 256)
+    downsample_factor: int = 8
+
+
+@dataclass
+class VAETrainConfig:
+    """The training script owns runtime-only settings."""
+
+    epochs: int = 30
+    batch_size: int = 128
+    lr: float = 2e-4
+    weight_decay: float = 1e-4
+    device: str = DEVICE
+    num_workers: int = 8
+    seed: int = 42
+    amp: bool = True
+    kl_weight: float = 1e-4
+    output_dir: str = field(
+        default_factory=lambda: str(Path(__file__).parent / "outputs" / "vae")
+    )
+    sample_count: int = 16
+
+
+@dataclass
 class FMConfig:
     train_cfg: TrainConfig = field(default_factory=TrainConfig)
     data_cfg: DataConfig = field(default_factory=DataConfig)
+    vae_cfg: VAEConfig = field(default_factory=VAEConfig)
+    vae_train_cfg: VAETrainConfig = field(default_factory=VAETrainConfig)
 
 
 if __name__ == "__main__":

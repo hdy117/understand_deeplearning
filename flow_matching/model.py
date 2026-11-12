@@ -7,7 +7,48 @@ logger = get_logger()
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from config import ModelConfig, DEVICE
+from config import ModelConfig, DEVICE, IMG_SIZE
+
+
+class Img2Tokens(nn.Module):
+
+    def __init__(self, img_size: int = IMG_SIZE, kernel_size: int = 8):
+        super().__init__()
+        # image to tokens
+        self.img_2_tokens = nn.Sequential(
+            nn.Conv2d(
+                in_channels=3,
+                out_channels=kernel_size * kernel_size,
+                kernel_size=kernel_size,
+                stride=kernel_size,
+                padding=0,
+            )
+        )
+
+    def forward(self, img: torch.Tensor) -> torch.Tensor:
+        """image to [batch, n_token, kernel_size*kernel_size]
+
+        Args:
+            img (torch.Tensor): [batch, channel, h, w]
+
+        Returns:
+            torch.Tensor: [batch, n_token, kernel_size*kernel_size]
+        """
+
+        # check, [batch, 3, h, w]
+        if img.ndim != 4:
+            err = f"img dim must be 4, but got {img.ndim}."
+            logger.error(err)
+            raise ValueError(err)
+
+        img_conv: torch.Tensor = self.img_2_tokens(
+            img
+        )  # [batch, kernel_size*kernel_size, h/8, w/8]
+        img = img_conv.flatten(
+            start_dim=2, end_dim=-1
+        )  # [batch, kernel_size*kernel_size, n_token]
+        img_tokens = img.permute(0, 2, 1)  # [batch, n_token, kernel_size*kernel_size]
+        return img_tokens
 
 
 class FMNet(nn.Module):
@@ -69,11 +110,11 @@ class FMNet(nn.Module):
         """velocity prediction with repect to x and step T
 
         Args:
-            x (torch.Tensor): _description_
-            T (int): _description_
+            x (torch.Tensor): [batch, n_token, d_model]
+            T (int): step T
 
         Returns:
-            torch.Tensor: predicted velocity
+            torch.Tensor: [batch, n_token, d_model]
         """
         # check x shape, make sure it has rank 3
         if x.ndim != 3:
@@ -94,7 +135,9 @@ class FMNet(nn.Module):
             raise ValueError(err)
 
         # from step t one hot to step t embedding
-        t_embed = self.step_2_embed(self.step_t_one_hot[T]).view(1, 1, self.d_model)
+        t_embed: torch.Tensor = self.step_2_embed(self.step_t_one_hot[T]).view(
+            1, 1, self.d_model
+        )
 
         # add step t embedding as condition
         x_hat: torch.Tensor = x + t_embed
