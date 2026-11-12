@@ -1,6 +1,6 @@
 # dataclass 学习指南：声明形状，而不是写步骤
 
-> 衔接：本目录的 `config.py`（`TrainConfig` / `FMConfig`）就是 dataclass 的标准用法；
+> 衔接：本目录的 `config.py`（`DiTTrainConfig` / `FMConfig`）就是 dataclass 的标准用法；
 > 本文把那份代码背后的**哲学、渊源、架构、流程**全部摊开。
 >
 > 验证环境：Python 3.12.9。文中所有报错文本、`__hash__ is None`、`asdict` 的深拷贝行为、`InitVar` 类属性残留，都是**实测**结果，不是背来的。
@@ -431,7 +431,7 @@ print(Naive().xs)    # [1]  ← 新对象身上居然有别人的数据
 from dataclasses import dataclass, field
 
 @dataclass
-class TrainConfig:
+class DiTTrainConfig:
     n_epochs: int = 1000
     lr: float = 1e-3
     rng_seed: int = 42
@@ -450,7 +450,7 @@ class TrainConfig:
 
 三种模式一句话总结：**校验（validate）、派生（derive）、建不可默认的对象（non-default init）**。
 
-> 设计味道：**校验放在构造点**（object invariants live with the object）。这样"存在一个非法的 TrainConfig"这件事在类型层面就不可能——下游代码可以放心假设 `lr > 0`，不用到处 if。
+> 设计味道：**校验放在构造点**（object invariants live with the object）。这样"存在一个非法的 DiTTrainConfig"这件事在类型层面就不可能——下游代码可以放心假设 `lr > 0`，不用到处 if。
 
 ### L4 三个现代开关：`frozen` / `slots` / `kw_only`
 
@@ -552,13 +552,13 @@ is_dataclass(c)           # True
 ```python
 # ① 配置树：组合优于继承（config.py 就是这么干的）
 @dataclass
-class TrainConfig:
+class DiTTrainConfig:
     lr: float = 1e-3
     n_epochs: int = 1000
 
 @dataclass
 class FMConfig:
-    train: TrainConfig = field(default_factory=TrainConfig)   # 每个实例独立
+    train: DiTTrainConfig = field(default_factory=DiTTrainConfig)   # 每个实例独立
     seed: int = 42
     device: str = "cpu"                                       # 不可变值，不需要 factory
 
@@ -593,10 +593,10 @@ class Meter:
 |---|---|---|
 | `n_epochs: int = 1000`，并注释"`1e3` 是 float" | ① 字段声明 | 好注释：把"注解即契约"点破了。`1e3` 在注解 `int` 下是**类型谎言**，会成为后来的踩坑点 |
 | `__post_init__` 里 `raise ValueError` | ④ 钩子·校验 | 典范。**在构造点失败**，远好于训练第 300 步才 NaN |
-| `train: TrainConfig = field(default_factory=TrainConfig)` | ③ field | 典范。组合优于继承，且避免所有 `FMConfig` 共享一个 `TrainConfig` |
+| `train: DiTTrainConfig = field(default_factory=DiTTrainConfig)` | ③ field | 典范。组合优于继承，且避免所有 `FMConfig` 共享一个 `DiTTrainConfig` |
 | `dataclasses.asdict(cfg)` | 序列化 | 输出嵌套 dict，直接 `json.dump` 打日志 |
 | `device: str = field(default_factory=lambda: "cpu")` | ③ field | ⚠️ **可商榷**：`str` 不可变，`device: str = "cpu"` 完全等价。留着无害，但会让读者以为"这里非 factory 不可" |
-| `@dataclass` 没开 `slots` / `frozen` | ② 开关 | 配置对象通常在启动时构造一次，收益不大；若想更严可考虑 `TrainConfig(frozen=True)` |
+| `@dataclass` 没开 `slots` / `frozen` | ② 开关 | 配置对象通常在启动时构造一次，收益不大；若想更严可考虑 `DiTTrainConfig(frozen=True)` |
 
 ### 6.1 关于 `device` 那行的小辩论
 
@@ -609,12 +609,12 @@ device: str = "cpu"                                  # 等价，更直白
 
 保留它的唯一理由是"风格一致（一律 factory）"——这理由成立，但要知道自己是**选风格**，而不是**被规则逼的**。这种区分在做架构决策时很关键。
 
-### 6.2 如果写成 `train: TrainConfig = TrainConfig()` 会怎样
+### 6.2 如果写成 `train: DiTTrainConfig = DiTTrainConfig()` 会怎样
 
 实测（Python 3.12.9）：
 
 ```text
-ValueError: mutable default <class 'TrainConfig'> for field train is not allowed: use default_factory
+ValueError: mutable default <class 'DiTTrainConfig'> for field train is not allowed: use default_factory
 ```
 
 注意它连 **dataclass 实例**都拦——因为 `eq=True` 的实例不可 hash，dataclass 就保守判定"可能可变"，一律拒绝。这条规则在 3.11 之后更严（从"只查 list/dict/set"扩展到"按 hashable 判断"）。

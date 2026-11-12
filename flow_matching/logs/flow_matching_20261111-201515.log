@@ -1,2 +1,2 @@
 2026-11-11 20:15:15.573 | INFO     | __main__:<module>:19 | py file path:/shared_disk_e/git/understand_deeplearning/flow_matching/config.py
-2026-11-11 20:15:15.766 | INFO     | __main__:<module>:92 | TrainConfig(epoches=1000, batch_size=64, lr=0.001, scheduler=None, optim=None)
+2026-11-11 20:15:15.766 | INFO     | __main__:<module>:92 | DiTTrainConfig(epoches=1000, batch_size=64, lr=0.001, scheduler=None, optim=None)

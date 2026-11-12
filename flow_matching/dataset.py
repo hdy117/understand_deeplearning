@@ -1,17 +1,93 @@
+from dataclasses import dataclass, field
+
 from utils import get_logger, Timer
 from torch.utils.data import DataLoader, Dataset
 import os
 import config
 import torch
-from PIL import Image
-import numpy as np
 import torchvision
+from config import DataConfig
 
 logger = get_logger()
 
 
+@dataclass
+class DataHolder:
+    category: list[str] = field(default_factory=list)
+    path: list[str] = field(default_factory=list)
+    img_tensor: list[torch.Tensor] = field(default_factory=list)
+    label_tensor: list[torch.Tensor] = field(default_factory=list)
+    category_set: set = field(default_factory=set)
+
+    def get_category_set(self) -> set:
+        return self.category_set
+
+    def load_data(self, data_dir: str, data_config: DataConfig = None) -> None:
+        # pre check
+        if data_config is None:
+            err = "data_config is None"
+            logger.error(err)
+            raise ValueError(err)
+
+        # list all dir under self.data_dir
+        category_dir_list: list[str] = os.listdir(data_dir)
+
+        # one hot tensor, [10,10]
+        one_hot_tensor: torch.Tensor = torch.eye(data_config.category_num).float()
+
+        # load all
+        for category in category_dir_list:
+            # update category set
+            self.category_set.add(category)
+
+            # load from dir
+            category_full_path: str = os.path.join(data_dir, category)
+            for img_file in os.listdir(category_full_path):
+                img_full_path = os.path.join(category_full_path, img_file)
+                self.category.append(category)
+                self.path.append(img_full_path)
+
+                image_tensor, label_one_hot = None, None
+                # load image
+                try:
+                    image_tensor = (
+                        torchvision.io.read_image(img_full_path).float() / 255.5
+                    )
+                    # one hot label
+                    category_index = list(self.category_set).index(category)
+                    label_one_hot: torch.Tensor = one_hot_tensor[category_index].clone()
+
+                    # save tensors
+                    self.img_tensor.append(image_tensor)
+                    self.label_tensor.append(label_one_hot)
+                except Exception as e:
+                    logger.error(f"error:{str(e)}")
+
+        # check
+        if len(self.img_tensor) <= 0:
+            err: str = f"load nothing from {self.data_dir}"
+            logger.error(err)
+            raise ValueError(err)
+
+        # check
+        if len(self.img_tensor) != len(self.label_tensor):
+            err: str = f"img_tensor and label_tensor size not match."
+            logger.error(err)
+            raise ValueError(err)
+
+    def __len__(self) -> int:
+        return len(self.img_tensor)
+
+    def __getitem__(self, index) -> tuple[torch.Tensor, torch.Tensor]:
+        if index >= self.__len__():
+            err: str = f"index out of range."
+            logger.error(err)
+            raise IndexError(err)
+        return self.img_tensor[index], self.label_tensor[index]
+
+
 class ImgDataset(Dataset):
-    def __init__(self, data_dir: str = ""):
+    def __init__(self, data_dir: str = "", data_config: DataConfig = None):
         super().__init__()
 
         # check if dir exists
@@ -24,69 +100,42 @@ class ImgDataset(Dataset):
         self.data_dir: str = data_dir
         logger.info(f"data_dir:{self.data_dir}")
 
-        # data list, [{"category":"", "path":""}]
-        self.data_list: list = []
-        self.category_set: set[str] = []
+        # data holder
+        self.data_holder: DataHolder = DataHolder()
+        timer_loader = Timer()
 
-        # list all dir under self.data_dir
-        category_dir_list: list[str] = os.listdir(self.data_dir)
-        for category_dir in category_dir_list:
-            # update category set
-            self.category_set.append(category_dir)
+        # load data into data_list
+        timer_loader.start()
+        self.data_holder.load_data(data_dir=self.data_dir, data_config=data_config)
+        elapsed = timer_loader.stop()
+        logger.info(f"load data time:{elapsed}")
 
-            category_full_path: str = os.path.join(self.data_dir, category_dir)
-            for img_file in os.listdir(category_full_path):
-                one_pair_data: dict = {}  # {"category":"", "path":""}
-                one_pair_data["path"] = os.path.join(category_full_path, img_file)
-                one_pair_data["category"] = category_dir
-                self.data_list.append(one_pair_data)
-
-        # check
-        if self.data_list.__len__() <= 0:
-            err: str = f"no category dir in {self.data_dir}"
-            logger.error(err)
-            raise FileNotFoundError(err)
-
-        self.category_num: int = len(self.category_set)
+        # print something
         logger.info(
-            f"category list:{self.category_set}\ntotal category num:{self.category_num}"
+            f"category_set:{self.data_holder.category_set}, category_num:{len(self.data_holder.category_set)}"
         )
-        self.category_to_index: dict = {
-            name: index for index, name in enumerate(self.category_set)
-        }
-        logger.info(f"{self.category_to_index}")
+        logger.info(
+            f"num img_tensor:{len(self.data_holder.img_tensor)}, num label_tensor:{len(self.data_holder.label_tensor)}"
+        )
 
     def __len__(self) -> int:
-        return len(self.data_list)
+        return len(self.data_holder)
 
     def __getitem__(self, index) -> tuple[torch.Tensor, torch.Tensor]:
-        # {"category":"", "path":""}
-        one_pair_data = self.data_list[index]
-        image_tensor = None
-        # load image
-        try:
-            image_tensor = torchvision.io.read_image(one_pair_data["path"]) / 255.5
-        except Exception as e:
-            logger.error(f"error:{str(e)}")
+        return self.data_holder.__getitem__(index)
 
-        if image_tensor is None:
-            raise RuntimeError(f"fail to load image {one_pair_data["path"]}")
-        # from HWC to CHW, and normalize
-        label_one_hot: torch.Tensor = self.label_2_one_hot(one_pair_data["category"])
-        return image_tensor, label_one_hot
-
-    def label_2_one_hot(self, label: str = "airplane") -> torch.Tensor:
-        one_hot_tensor: torch.Tensor = torch.zeros(size=[self.category_num])
-
-        if label in self.category_set:
-            one_hot_tensor[self.category_to_index[label]] = 1.0
-        return one_hot_tensor
+    def get_category_set(self):
+        return self.data_holder.get_category_set()
 
 
 if __name__ == "__main__":
     fm_data_cfg = config.DataConfig()
-    img_train_dataset = ImgDataset(fm_data_cfg.train_dir)
-    img_test_dataset = ImgDataset(fm_data_cfg.test_dir)
+    img_train_dataset = ImgDataset(
+        data_dir=fm_data_cfg.train_dir, data_config=fm_data_cfg
+    )
+    img_test_dataset = ImgDataset(
+        data_dir=fm_data_cfg.test_dir, data_config=fm_data_cfg
+    )
 
     img_tensor, label_one_hot_tensor = img_train_dataset.__getitem__(20)
     logger.info(f"{img_tensor}")

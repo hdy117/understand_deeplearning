@@ -18,25 +18,18 @@ IMG_SIZE: int = 64
 
 
 @dataclass
-class TrainConfig:
+class DiTTrainConfig:
     epoches: int = 30
     batch_size: int = 64
     lr: float = 1e-3
     device = DEVICE
     img_size: int = IMG_SIZE
-    scheduler: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts | None = None
-    optimizer: torch.optim.AdamW | None = None
 
-    def setup_optimizer(self, optimizer: torch.optim.AdamW = None):
-        if optimizer is None:
-            err_info: str = "error, torch optimizer is none."
-            logger.error(err_info)
-            raise ValueError(err_info)
-        else:
-            self.optimizer = optimizer
-            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                self.optimizer, T_0=10, T_mult=1, eta_min=1e-4
-            )
+    num_workers: int = 16
+    persist_worker: int = 1
+    pin_memory = DEVICE
+
+    seed: int = 42
 
 
 @dataclass
@@ -109,19 +102,19 @@ class VAETrainConfig:
     lr: float = 2e-4
     weight_decay: float = 1e-4
     device: str = DEVICE
-    num_workers: int = 8
+    num_workers: int = 16
     seed: int = 42
     amp: bool = True
     kl_weight: float = 1e-4
     output_dir: str = field(
-        default_factory=lambda: str(Path(__file__).parent / "outputs" / "vae")
+        default_factory=lambda: str(Path(__file__).parent / "outputs")
     )
     sample_count: int = 16
 
 
 @dataclass
 class FMConfig:
-    train_cfg: TrainConfig = field(default_factory=TrainConfig)
+    train_cfg: DiTTrainConfig = field(default_factory=DiTTrainConfig)
     data_cfg: DataConfig = field(default_factory=DataConfig)
     vae_cfg: VAEConfig = field(default_factory=VAEConfig)
     vae_train_cfg: VAETrainConfig = field(default_factory=VAETrainConfig)
