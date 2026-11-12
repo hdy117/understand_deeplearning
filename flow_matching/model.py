@@ -34,7 +34,9 @@ class FMNet(nn.Module):
 
         # check again
         if self.d_model % self.n_head != 0:
-            raise RuntimeError(f"self.d_model and self.n_head mismatch, must can be %")
+            raise RuntimeError(
+                f"self.d_model and self.n_head mismatch, yushu must can be 0"
+            )
 
         # calculate
         self.one_step: float = 1.0 / self.total_steps
@@ -85,8 +87,11 @@ class FMNet(nn.Module):
             logger.error(err)
             raise ValueError(err)
 
-        # shape of input x, [batch, seq, d_model]
-        B, S, D = x.shape
+        # check if I within [0, self.total_steps)
+        if T < 0 or T >= self.total_steps:
+            err: str = f"T should be within [0, self.total_steps), but got {T}."
+            logger.error(err)
+            raise ValueError(err)
 
         # from step t one hot to step t embedding
         t_embed = self.step_2_embed(self.step_t_one_hot[T]).view(1, 1, self.d_model)
@@ -106,7 +111,7 @@ class FMNet(nn.Module):
 
         Args:
             x0 (torch.Tensor): noise
-            x1 (torch.Tensor): target velocity
+            x1 (torch.Tensor): target
             T (int): step T
 
         Returns:
