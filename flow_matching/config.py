@@ -19,8 +19,8 @@ IMG_SIZE: int = 64
 
 @dataclass
 class FlowMatchingTrainConfig:
-    epoches: int = 30
-    batch_size: int = 64
+    epoches: int = 20
+    batch_size: int = 512
     lr: float = 2e-4
     device = DEVICE
     img_size: int = IMG_SIZE

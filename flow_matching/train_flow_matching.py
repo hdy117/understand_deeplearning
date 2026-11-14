@@ -126,6 +126,7 @@ class TrainDit(nn.Module):
             logger.info(f"=================")
             logger.info(f"current epoch:{epoch}, total:{self.train_cfg.epoches}")
             accu_loss = 0.0
+            self.timer.start()
             for index, (img_batch, label_batch) in enumerate(self.train_dataloader):
                 # load batches from dataloader and send to device
                 img_batch: torch.Tensor = img_batch.to(self.train_cfg.device)
@@ -139,37 +140,46 @@ class TrainDit(nn.Module):
                     x1 = self.vae.encode_tokens(img_batch)
                 x0 = torch.randn_like(x1, device=x1.device)
 
-                # Sample continuous flow time and build the interpolation.
-                T = torch.rand(B, device=x1.device)
-                xt, target_velocity = self.flow_net.get_xt_and_xt_dot(
-                    x0=x0,
-                    x1=x1,
-                    T=T,
-                )
+                for i in range(self.model_cfg.total_steps):
+                    # Sample continuous flow time and build the interpolation.
+                    T = torch.rand(B, device=x1.device)
+                    xt, target_velocity = self.flow_net.get_xt_and_xt_dot(
+                        x0=x0,
+                        x1=x1,
+                        T=T,
+                    )
 
-                # model predict velocity
-                pred_velocity = self.flow_net.forward(xt, T, label_batch)
+                    # model predict velocity
+                    pred_velocity = self.flow_net.forward(xt, T, label_batch)
 
-                # loss
-                loss = self.loss_fn(pred_velocity, target_velocity)
-                self.optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                self.optimizer.step()
+                    # loss
+                    loss = self.loss_fn(pred_velocity, target_velocity)
+                    self.optimizer.zero_grad(set_to_none=True)
+                    loss.backward()
+                    self.optimizer.step()
 
-                # save train meta
-                accu_loss = accu_loss + loss.item()
-                if (epoch >= self.train_cfg.epoches * 0.8) and (
-                    loss.item() < self.train_meta.best_loss
-                ):
-                    self.train_meta.best_loss = loss.item()
-                    self.save_checkpoint()
-                    logger.info(f"best loss:{self.train_meta.best_loss}")
+                    # save train meta
+                    accu_loss = accu_loss + loss.item()
 
+            # save the best
             mean_loss = accu_loss / max(len(self.train_dataloader), 1)
-            logger.info(f"epoch:{epoch + 1} mean loss:{mean_loss:.6f}")
+            if (epoch >= self.train_cfg.epoches * 0.4) and (
+                mean_loss < self.train_meta.best_loss
+            ):
+                self.train_meta.best_loss = loss.item()
+                self.save_checkpoint()
+                logger.info(f"best loss:{self.train_meta.best_loss}")
+            logger.info(f"epoch:{epoch}, mean loss:{mean_loss:.6f}")
+
             # scheduler for lr
             self.scheduler.step()
             self.train_meta.next_epoch = epoch + 1
+
+            # generate image
+            self.eval()
+
+            elsaped = self.timer.stop()
+            logger.info(f"""epoch:{epoch} time:{elsaped} s""")
 
     @torch.inference_mode()
     def eval(self):
