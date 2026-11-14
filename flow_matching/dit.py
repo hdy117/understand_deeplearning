@@ -106,41 +106,40 @@ class FlowMatching(nn.Module):
             nn.GELU(),
         )
 
-    def forward(self, x: torch.Tensor, T: int) -> torch.Tensor:
+    def forward(self, xt: torch.Tensor, T: torch.Tensor) -> torch.Tensor:
         """velocity prediction with repect to x and step T
 
         Args:
-            x (torch.Tensor): [batch, n_token, d_model]
-            T (int): step T
+            xt (torch.Tensor): [batch, n_token, d_model]
+            T (torch.Tensor): [batch] or [batch, 1] ): step T
 
         Returns:
             torch.Tensor: [batch, n_token, d_model]
         """
         # check x shape, make sure it has rank 3
-        if x.ndim != 3:
-            err: str = f"x should have rank 3, but got {x.ndim}."
+        if xt.ndim != 3:
+            err: str = f"x should have rank 3, but got {xt.ndim}."
             logger.error(err)
             raise ValueError(err)
 
         # check T shape, make sure it is an integer
-        if not isinstance(T, int):
-            err: str = f"T should be an integer, but got {T}."
+        if T.ndim != 1 and T.ndim != 2:
+            err: str = f"T be dim [batch] or [batch, 1], but got {T.shape}."
             logger.error(err)
             raise ValueError(err)
 
-        # check if I within [0, self.total_steps)
-        if T < 0 or T >= self.total_steps:
+        # check if T within [0, self.total_steps)
+        if T.max().item() >= self.total_steps:
             err: str = f"T should be within [0, self.total_steps), but got {T}."
             logger.error(err)
             raise ValueError(err)
 
         # from step t one hot to step t embedding
-        t_embed: torch.Tensor = self.step_2_embed(self.step_t_one_hot[T]).view(
-            1, 1, self.d_model
-        )
+        step_one_hot = F.one_hot(T, num_classes=self.category_num)
+        t_embed: torch.Tensor = self.step_2_embed(step_one_hot).view(1, 1, self.d_model)
 
         # add step t embedding as condition
-        x_hat: torch.Tensor = x + t_embed
+        x_hat: torch.Tensor = xt + t_embed
 
         # forward
         pred_velocity: torch.Tensor = self.dit(x_hat)

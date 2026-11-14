@@ -12,6 +12,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from config import VAEConfig
+import os
+from utils import get_logger
+
+logger = get_logger()
 
 
 class VAE(nn.Module):
@@ -78,7 +82,9 @@ class VAE(nn.Module):
                     stride=stride,
                     padding=1,
                 ),
-                nn.GroupNorm(num_groups=min(8, out_channels), num_channels=out_channels),
+                nn.GroupNorm(
+                    num_groups=min(8, out_channels), num_channels=out_channels
+                ),
                 nn.SiLU(),
                 nn.Conv2d(
                     out_channels,
@@ -86,7 +92,9 @@ class VAE(nn.Module):
                     kernel_size=3,
                     padding=1,
                 ),
-                nn.GroupNorm(num_groups=min(8, out_channels), num_channels=out_channels),
+                nn.GroupNorm(
+                    num_groups=min(8, out_channels), num_channels=out_channels
+                ),
                 nn.SiLU(),
             ]
         )
@@ -210,9 +218,19 @@ def vae_loss(
     if kl_weight < 0:
         raise ValueError("kl_weight must be non-negative")
     reconstruction_loss = F.mse_loss(reconstruction, target)
-    kl_per_batch = -0.5 * (
-        1.0 + logvar - mean.square() - logvar.exp()
-    ).sum(dim=(1, 2, 3))
+    kl_per_batch = -0.5 * (1.0 + logvar - mean.square() - logvar.exp()).sum(
+        dim=(1, 2, 3)
+    )
     kl_loss = kl_per_batch.mean()
     total_loss = reconstruction_loss + kl_weight * kl_loss
     return total_loss, reconstruction_loss, kl_loss
+
+
+def load_vae_from_ckpt(ckpt_path: str = None) -> VAE:
+    if not os.path.exists(ckpt_path):
+        err = f"{ckpt_path} does not exist"
+        raise ValueError(err)
+    ckpt = torch.load(ckpt_path, weights_only=False)
+    vae = VAE()
+    vae.load_state_dict(ckpt["model"])
+    return vae
