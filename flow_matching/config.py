@@ -21,7 +21,7 @@ IMG_SIZE: int = 64
 class DiTTrainConfig:
     epoches: int = 30
     batch_size: int = 64
-    lr: float = 1e-3
+    lr: float = 2e-4
     device = DEVICE
     img_size: int = IMG_SIZE
     num_workers: int = 16
@@ -72,7 +72,8 @@ class DataConfig:
 
 @dataclass
 class DiTModelConfig:
-    d_model: int = 4 * 8 * 8  # from VAE latent size
+    d_model: int = 64
+    latent_channels: int = 4  # VAE token feature dimension
     n_layer: int = 6
     n_head: int = 8
     total_steps: int = 24

@@ -4,8 +4,6 @@ from config import (
     FMConfig,
     DataConfig,
     DiTModelConfig,
-    DEVICE,
-    IMG_SIZE,
 )
 from dataset import ImgDataset
 import torch
@@ -15,7 +13,6 @@ from torch.utils.data import DataLoader
 from dit import FlowMatching
 from vae import VAE, load_vae_from_ckpt
 from pathlib import Path
-import os
 import torchvision
 from dataclasses import dataclass
 
@@ -60,7 +57,7 @@ class TrainDit(nn.Module):
             num_workers=self.train_cfg.num_workers,
             pin_memory=True,
             shuffle=True,
-            persistent_workers=self.train_cfg.num_workers / 2,
+            persistent_workers=self.train_cfg.num_workers > 0,
         )
 
         self.test_dataloader = DataLoader(
@@ -68,29 +65,23 @@ class TrainDit(nn.Module):
             batch_size=self.train_cfg.batch_size,
             num_workers=self.train_cfg.num_workers,
             pin_memory=True,
-            shuffle=True,
-            persistent_workers=self.train_cfg.num_workers / 2,
+            shuffle=False,
+            persistent_workers=self.train_cfg.num_workers > 0,
         )
 
         # model
         self.flow_net: FlowMatching = FlowMatching(
             model_config=self.model_cfg, device=self.train_cfg.device
         )
-        self.flow_net_path = (
-            os.path.join(self.fm_cfg.vae_train_cfg.output_dir, "flow_matching.pt"),
-        )
-        self.flow_net_eval_img = os.path.join(
-            os.path.join(
-                self.fm_cfg.vae_train_cfg.output_dir, "flow_matching_reconstruction.png"
-            ),
-        )
+        self.output_dir = Path(self.fm_cfg.vae_train_cfg.output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.flow_net_path = self.output_dir / "flow_matching.pt"
+        self.flow_net_eval_img = self.output_dir / "flow_matching_reconstruction.png"
         self.train_meta: TrainDitMeta = TrainDitMeta()
 
         # load vae model for encoder and decoder
         self.vae: VAE = None
-        self.vae_ckpt_path = os.path.join(
-            fm_cfg.vae_train_cfg.output_dir, "vae_best.pt"
-        )
+        self.vae_ckpt_path = self.output_dir / "vae_best.pt"
         self.vae = load_vae_from_ckpt(self.vae_ckpt_path)
         if self.vae is None:
             err = f"Failed to load vae model from {self.vae_ckpt_path}"
@@ -119,8 +110,7 @@ class TrainDit(nn.Module):
             eta_min=self.train_cfg.lr * 0.1,
         )
 
-        # dir and checkpoint
-        self.output_dir = Path(__file__).parent / "outputs"
+        # Additional artifact paths retained for future evaluation workflows.
         self.dit_best_ckpt = self.output_dir / "dit_best_ckpt.pth"
         self.dit_last_ckpt = self.output_dir / "dit_last_ckpt.pth"
         self.dit_best_reconstruction = self.output_dir / "dit_best_reconstruction.png"
@@ -130,11 +120,12 @@ class TrainDit(nn.Module):
         self.timer = Timer()
 
     def train(self):
-        # one step size of sampler
-        one_step = 1.0 / self.model_cfg.total_steps
-
+        self.flow_net.train()
         # train
         for epoch in range(self.train_cfg.epoches):
+            logger.info(f"=================")
+            logger.info(f"current epoch:{epoch}, total:{self.train_cfg.epoches}")
+            accu_loss = 0.0
             for index, (img_batch, label_batch) in enumerate(self.train_dataloader):
                 # load batches from dataloader and send to device
                 img_batch: torch.Tensor = img_batch.to(self.train_cfg.device)
@@ -144,67 +135,88 @@ class TrainDit(nn.Module):
                 B = img_batch.shape[0]
 
                 # encode image to latent tokens, [batch, 64, 4]
-                x1 = self.vae.encode_tokens(img_batch)
+                with torch.no_grad():
+                    x1 = self.vae.encode_tokens(img_batch)
                 x0 = torch.randn_like(x1, device=x1.device)
 
-                # target velocity
-                target_velocity = x1 - x0
-
-                # xt, interplotation by step T
-                T = torch.rand(B, device=x1.device) * one_step
-                xt = (1.0 - T[:, None]) * x0 + T[:, None] * x1
+                # Sample continuous flow time and build the interpolation.
+                T = torch.rand(B, device=x1.device)
+                xt, target_velocity = self.flow_net.get_xt_and_xt_dot(
+                    x0=x0,
+                    x1=x1,
+                    T=T,
+                )
 
                 # model predict velocity
-                pred_velocity = self.flow_net.forward(xt, T)
+                pred_velocity = self.flow_net.forward(xt, T, label_batch)
 
                 # loss
-                loss = self.loss_fn(xt, pred_velocity).mean(dim=-1)
-                self.optimizer.zero_grad()
+                loss = self.loss_fn(pred_velocity, target_velocity)
+                self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 self.optimizer.step()
 
                 # save train meta
-                if loss.item() < self.train_meta.best_loss:
+                accu_loss = accu_loss + loss.item()
+                if (epoch >= self.train_cfg.epoches * 0.8) and (
+                    loss.item() < self.train_meta.best_loss
+                ):
                     self.train_meta.best_loss = loss.item()
                     self.save_checkpoint()
+                    logger.info(f"best loss:{self.train_meta.best_loss}")
 
+            mean_loss = accu_loss / max(len(self.train_dataloader), 1)
+            logger.info(f"epoch:{epoch + 1} mean loss:{mean_loss:.6f}")
             # scheduler for lr
             self.scheduler.step()
             self.train_meta.next_epoch = epoch + 1
 
+    @torch.inference_mode()
     def eval(self):
-        ckpt = torch.load(self.flow_net_path)
-        flow_net: FlowMatching = ckpt["model"]
+        ckpt = torch.load(
+            self.flow_net_path,
+            map_location=self.train_cfg.device,
+            weights_only=True,
+        )
+        flow_net = FlowMatching(
+            model_config=self.model_cfg,
+            device=self.train_cfg.device,
+        )
+        flow_net.load_state_dict(ckpt["model"])
 
         flow_net.eval()
-        flow_net = flow_net.to(device=self.train_cfg.device)
+        one_step = 1.0 / self.model_cfg.total_steps
+        batch_size = self.model_cfg.category_num
+        token_count = self.vae.latent_size * self.vae.latent_size
+        label_batch = torch.eye(
+            batch_size,
+            device=self.train_cfg.device,
+        )
+        latent = torch.randn(
+            size=[batch_size, token_count, self.model_cfg.latent_channels],
+            device=self.train_cfg.device,
+        )
 
-        with torch.no_grad():
-            # one step size of sampler
-            one_step = torch.tensor(
-                [1.0 / self.model_cfg.total_steps], device=self.train_cfg.device
+        # Integrate the learned velocity field from t=0 to t=1.
+        for step in range(self.model_cfg.total_steps):
+            T = torch.full(
+                size=[batch_size],
+                fill_value=step * one_step,
+                device=self.train_cfg.device,
+            )
+            latent = latent + one_step * flow_net.forward(
+                latent,
+                T,
+                label_batch,
             )
 
-            # batch size
-            B = 10
-
-            # noise
-            x0 = torch.randn(size=[B, 64, 4], device=self.train_cfg.device)
-
-            # sample
-            for t in range(self.model_cfg.total_steps):
-                T = torch.ones(size=[B], device=self.train_cfg.device)
-                pred_velocity = flow_net.forward(x0, T)
-                x0 = x0 + one_step * pred_velocity
-
-            # decoder
-            img = self.vae.decode_tokens(x0)
-
-            # save
-            torchvision.utils.save_image(img, self.flow_net_eval_img)
-            logger.info(f"save {self.flow_net_eval_img}")
+        img = self.vae.decode_tokens(latent)
+        torchvision.utils.save_image(img, self.flow_net_eval_img, nrow=5)
+        logger.info(f"save {self.flow_net_eval_img}")
 
     def save_checkpoint(self):
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        temporary_path = self.flow_net_path.with_suffix(".pt.tmp")
         torch.save(
             {
                 "next_epoch": self.train_meta.next_epoch,
@@ -212,8 +224,9 @@ class TrainDit(nn.Module):
                 "model": self.flow_net.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
             },
-            self.flow_net_path,
+            temporary_path,
         )
+        temporary_path.replace(self.flow_net_path)
 
 
 if __name__ == "__main__":
