@@ -25,7 +25,7 @@ logger = get_logger()
 @dataclass
 class TrainDitMeta:
     best_loss: float = 1e12
-    cur_epoch: int = 0
+    next_epoch: int = 0
 
 
 class TrainDit(nn.Module):
@@ -170,6 +170,7 @@ class TrainDit(nn.Module):
 
             # scheduler for lr
             self.scheduler.step()
+            self.train_meta.next_epoch = epoch + 1
 
     def eval(self):
         ckpt = torch.load(self.flow_net_path)
@@ -206,7 +207,7 @@ class TrainDit(nn.Module):
     def save_checkpoint(self):
         torch.save(
             {
-                "cur_epoch": self.train_meta.cur_epoch,
+                "next_epoch": self.train_meta.next_epoch,
                 "best_loss": self.train_meta.best_loss,
                 "model": self.flow_net.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
