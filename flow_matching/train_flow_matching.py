@@ -41,7 +41,7 @@ class TrainDit(nn.Module):
             raise ValueError(err)
 
         self.data_cfg: DataConfig = self.fm_cfg.data_cfg
-        self.model_cfg: DiTModelConfig = self.fm_cfg.model_cfg
+        self.model_cfg: DiTModelConfig = self.fm_cfg.fm_model_cfg
         self.train_cfg: DiTTrainConfig = self.fm_cfg.train_cfg
 
         # set random seed
@@ -113,7 +113,7 @@ class TrainDit(nn.Module):
 
         # scheduler
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optizer=self.optimizer,
+            optimizer=self.optimizer,
             T_0=10,
             T_mult=1,
             eta_min=self.train_cfg.lr * 0.1,
@@ -214,3 +214,11 @@ class TrainDit(nn.Module):
             },
             self.flow_net_path,
         )
+
+
+if __name__ == "__main__":
+    fm_cfg = FMConfig()
+    train_dit = TrainDit(fm_cfg=fm_cfg)
+    train_dit.train()
+    train_dit.save_checkpoint()
+    train_dit.eval()

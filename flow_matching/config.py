@@ -111,6 +111,7 @@ class VAETrainConfig:
 @dataclass
 class FMConfig:
     train_cfg: DiTTrainConfig = field(default_factory=DiTTrainConfig)
+    fm_model_cfg: DiTModelConfig = field(default_factory=DiTModelConfig)
     data_cfg: DataConfig = field(default_factory=DataConfig)
     vae_cfg: VAEConfig = field(default_factory=VAEConfig)
     vae_train_cfg: VAETrainConfig = field(default_factory=VAETrainConfig)
