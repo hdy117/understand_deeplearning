@@ -5,7 +5,7 @@ logger = get_logger()
 import math
 import torch
 import torch.nn as nn
-from config import DiTModelConfig, DEVICE, IMG_SIZE
+from config import FlowMatchingModelConfig, DEVICE, IMG_SIZE
 
 
 class Img2Tokens(nn.Module):
@@ -80,11 +80,13 @@ class TimestepEmbedding(nn.Module):
 class FlowMatching(nn.Module):
     def __init__(
         self,
-        model_config: DiTModelConfig | None = None,
+        model_config: FlowMatchingModelConfig | None = None,
         device=DEVICE,
     ):
         super().__init__()
-        model_config = model_config if model_config is not None else DiTModelConfig()
+        model_config = (
+            model_config if model_config is not None else FlowMatchingModelConfig()
+        )
         self.d_model: int = model_config.d_model  # model dim
         self.latent_channels: int = model_config.latent_channels
         self.category_num: int = model_config.category_num
@@ -185,10 +187,7 @@ class FlowMatching(nn.Module):
 
         time = T.reshape(-1)
         if time.shape[0] != xt.shape[0]:
-            err = (
-                f"T batch size must be {xt.shape[0]}, "
-                f"but got {time.shape[0]}."
-            )
+            err = f"T batch size must be {xt.shape[0]}, " f"but got {time.shape[0]}."
             logger.error(err)
             raise ValueError(err)
         if time.device != xt.device:
@@ -267,7 +266,7 @@ class FlowMatching(nn.Module):
 
 
 if __name__ == "__main__":
-    model_cfg = DiTModelConfig()
+    model_cfg = FlowMatchingModelConfig()
     device = DEVICE
     flow_matching_net = FlowMatching(model_config=model_cfg, device=device)
     x1 = torch.randn(size=[64, 32, model_cfg.latent_channels], device=device)

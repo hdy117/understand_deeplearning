@@ -1,16 +1,16 @@
 from utils import get_logger, set_seed, Timer
 from config import (
-    DiTTrainConfig,
+    FlowMatchingTrainConfig,
     FMConfig,
     DataConfig,
-    DiTModelConfig,
+    FlowMatchingModelConfig,
 )
 from dataset import ImgDataset
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from dit import FlowMatching
+from flow_matching import FlowMatching
 from vae import VAE, load_vae_from_ckpt
 from pathlib import Path
 import torchvision
@@ -38,8 +38,8 @@ class TrainDit(nn.Module):
             raise ValueError(err)
 
         self.data_cfg: DataConfig = self.fm_cfg.data_cfg
-        self.model_cfg: DiTModelConfig = self.fm_cfg.fm_model_cfg
-        self.train_cfg: DiTTrainConfig = self.fm_cfg.train_cfg
+        self.model_cfg: FlowMatchingModelConfig = self.fm_cfg.fm_model_cfg
+        self.train_cfg: FlowMatchingTrainConfig = self.fm_cfg.train_cfg
 
         # set random seed
         set_seed(self.fm_cfg.train_cfg.seed)

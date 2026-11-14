@@ -18,7 +18,7 @@ IMG_SIZE: int = 64
 
 
 @dataclass
-class DiTTrainConfig:
+class FlowMatchingTrainConfig:
     epoches: int = 30
     batch_size: int = 64
     lr: float = 2e-4
@@ -71,7 +71,7 @@ class DataConfig:
 
 
 @dataclass
-class DiTModelConfig:
+class FlowMatchingModelConfig:
     d_model: int = 64
     latent_channels: int = 4  # VAE token feature dimension
     n_layer: int = 6
@@ -111,8 +111,10 @@ class VAETrainConfig:
 
 @dataclass
 class FMConfig:
-    train_cfg: DiTTrainConfig = field(default_factory=DiTTrainConfig)
-    fm_model_cfg: DiTModelConfig = field(default_factory=DiTModelConfig)
+    train_cfg: FlowMatchingTrainConfig = field(default_factory=FlowMatchingTrainConfig)
+    fm_model_cfg: FlowMatchingModelConfig = field(
+        default_factory=FlowMatchingModelConfig
+    )
     data_cfg: DataConfig = field(default_factory=DataConfig)
     vae_cfg: VAEConfig = field(default_factory=VAEConfig)
     vae_train_cfg: VAETrainConfig = field(default_factory=VAETrainConfig)
