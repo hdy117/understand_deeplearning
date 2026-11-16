@@ -72,11 +72,12 @@ class DataConfig:
 
 @dataclass
 class FlowMatchingModelConfig:
-    d_model: int = 64
+    d_model: int = 256
     latent_channels: int = 4  # VAE token feature dimension
-    n_layer: int = 6
+    n_layer: int = 8
     n_head: int = 8
-    total_steps: int = 24
+    total_steps: int = 20
+    sampling_seed: int = 42
     category_num: int = DataConfig.category_num
 
 
@@ -95,7 +96,7 @@ class VAETrainConfig:
     """The training script owns runtime-only settings."""
 
     epochs: int = 30
-    batch_size: int = 128
+    batch_size: int = 512
     lr: float = 2e-4
     weight_decay: float = 1e-4
     device: str = DEVICE

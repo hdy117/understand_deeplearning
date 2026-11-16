@@ -173,7 +173,7 @@ class FlowMatching(nn.Module):
         self.label_embed = nn.Linear(self.category_num, self.d_model)
 
         # flow matching with transformer
-        self.dit = nn.TransformerEncoder(
+        self.flow_matching = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
                 d_model=self.d_model,
                 nhead=self.n_head,
@@ -290,7 +290,7 @@ class FlowMatching(nn.Module):
         hidden = self.input_proj(xt) + self.position_embed()
         condition = self.time_embed(time) + self.label_embed(label_batch)
         hidden = hidden + condition[:, None, :]
-        pred_velocity = self.output_proj(self.dit(hidden))
+        pred_velocity = self.output_proj(self.flow_matching(hidden))
 
         return pred_velocity
 

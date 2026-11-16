@@ -115,12 +115,6 @@ class TrainFlowMatching(nn.Module):
             eta_min=self.train_cfg.lr * 0.1,
         )
 
-        # Additional artifact paths retained for future evaluation workflows.
-        self.dit_best_ckpt = self.output_dir / "dit_best_ckpt.pth"
-        self.dit_last_ckpt = self.output_dir / "dit_last_ckpt.pth"
-        self.dit_best_reconstruction = self.output_dir / "dit_best_reconstruction.png"
-        self.dit_last_reconstruction = self.output_dir / "dit_last_reconstruction.png"
-
         # timer
         self.timer = Timer()
 
@@ -207,9 +201,13 @@ class TrainFlowMatching(nn.Module):
             batch_size,
             device=self.train_cfg.device,
         )
+        sampling_generator = torch.Generator(device=self.train_cfg.device).manual_seed(
+            self.model_cfg.sampling_seed
+        )
         latent = torch.randn(
             size=[batch_size, token_count, self.model_cfg.latent_channels],
             device=self.train_cfg.device,
+            generator=sampling_generator,
         )
 
         # Integrate the learned velocity field from t=0 to t=1.
