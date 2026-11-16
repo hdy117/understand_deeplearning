@@ -10,7 +10,11 @@ from config import FlowMatchingModelConfig, DEVICE, IMG_SIZE
 
 class Img2Tokens(nn.Module):
 
-    def __init__(self, img_size: int = IMG_SIZE, kernel_size: int = 8):
+    def __init__(
+        self,
+        img_size: int = IMG_SIZE,
+        kernel_size: int = 8,
+    ):
         super().__init__()
         # image to tokens
         self.img_2_tokens = nn.Sequential(
