@@ -194,6 +194,8 @@ class TrainFlowMatching(nn.Module):
 
     @torch.inference_mode()
     def sample(self, flow_net: FlowMatching, img_path: str = None):
+        img_path = Path(img_path) if img_path is not None else self.flow_net_eval_img
+
         # eval only
         flow_net.eval()
 
@@ -224,8 +226,8 @@ class TrainFlowMatching(nn.Module):
             )
 
         img = self.vae.decode_tokens(latent)
-        torchvision.utils.save_image(img, self.flow_net_eval_img, nrow=5)
-        logger.info(f"save {self.flow_net_eval_img}")
+        torchvision.utils.save_image(img, img_path, nrow=5)
+        logger.info(f"save {img_path}")
 
     def save_checkpoint(self, out_path: str | Path = None):
         self.output_dir.mkdir(parents=True, exist_ok=True)
