@@ -28,13 +28,13 @@ class Img2Tokens(nn.Module):
         )
 
     def forward(self, img: torch.Tensor) -> torch.Tensor:
-        """image to [batch, n_token, kernel_size*kernel_size]
+        """image to [batch, n_token, kernel_size*kernel_size], while n_token=(img_size/kernel_size)^2
 
         Args:
             img (torch.Tensor): [batch, channel, h, w]
 
         Returns:
-            torch.Tensor: [batch, n_token, kernel_size*kernel_size]
+            torch.Tensor: [batch, n_token, kernel_size*kernel_size], while n_token=(img_size/kernel_size)^2
         """
 
         # check, [batch, 3, h, w]

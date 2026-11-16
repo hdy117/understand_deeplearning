@@ -17,10 +17,7 @@ class DataHolder:
     path: list[str] = field(default_factory=list)
     img_tensor: list[torch.Tensor] = field(default_factory=list)
     label_tensor: list[torch.Tensor] = field(default_factory=list)
-    category_set: set = field(default_factory=set)
-
-    def get_category_set(self) -> set:
-        return self.category_set
+    category_list: list = field(default_factory=list)
 
     def load_data(self, data_dir: str, data_config: DataConfig = None) -> None:
         # pre check
@@ -32,14 +29,18 @@ class DataHolder:
         # list all dir under self.data_dir
         category_dir_list: list[str] = os.listdir(data_dir)
 
+        categories = sorted(
+            name
+            for name in os.listdir(data_dir)
+            if os.path.isdir(os.path.join(data_dir, name))
+        )
+        category_to_index = {name: index for index, name in enumerate(categories)}
+
         # one hot tensor, [10,10]
         one_hot_tensor: torch.Tensor = torch.eye(data_config.category_num).float()
 
         # load all
         for category in category_dir_list:
-            # update category set
-            self.category_set.add(category)
-
             # load from dir
             category_full_path: str = os.path.join(data_dir, category)
             for img_file in os.listdir(category_full_path):
@@ -54,7 +55,7 @@ class DataHolder:
                         torchvision.io.read_image(img_full_path).float() / 255.5
                     )
                     # one hot label
-                    category_index = list(self.category_set).index(category)
+                    category_index = category_to_index[category]
                     label_one_hot: torch.Tensor = one_hot_tensor[category_index].clone()
 
                     # save tensors
@@ -112,9 +113,6 @@ class ImgDataset(Dataset):
 
         # print something
         logger.info(
-            f"category_set:{self.data_holder.category_set}, category_num:{len(self.data_holder.category_set)}"
-        )
-        logger.info(
             f"num img_tensor:{len(self.data_holder.img_tensor)}, num label_tensor:{len(self.data_holder.label_tensor)}"
         )
 
@@ -123,9 +121,6 @@ class ImgDataset(Dataset):
 
     def __getitem__(self, index) -> tuple[torch.Tensor, torch.Tensor]:
         return self.data_holder.__getitem__(index)
-
-    def get_category_set(self):
-        return self.data_holder.get_category_set()
 
 
 if __name__ == "__main__":
