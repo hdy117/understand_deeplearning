@@ -1,3 +1,5 @@
+from numpy import fabs
+
 from utils import get_logger, set_seed, Timer
 from config import (
     FlowMatchingTrainConfig,
@@ -15,17 +17,18 @@ from vae import VAE, load_vae_from_ckpt
 from pathlib import Path
 import torchvision
 from dataclasses import dataclass
+import argparse, os
 
 logger = get_logger()
 
 
 @dataclass
-class TrainDitMeta:
+class TrainFMMeta:
     best_loss: float = 1e12
     next_epoch: int = 0
 
 
-class TrainDit(nn.Module):
+class TrainFlowMatching(nn.Module):
     def __init__(self, fm_cfg: FMConfig = None):
         super().__init__()
 
@@ -79,7 +82,7 @@ class TrainDit(nn.Module):
         self.flow_net_eval_img = self.output_dir / "flow_matching_epoch.png"
         self.flow_net_path_best = self.output_dir / "flow_matching_best.pt"
         self.flow_net_eval_img_best = self.output_dir / "flow_matching_best.png"
-        self.train_meta: TrainDitMeta = TrainDitMeta()
+        self.train_meta: TrainFMMeta = TrainFMMeta()
 
         # load vae model for encoder and decoder
         self.vae: VAE = None
@@ -121,7 +124,7 @@ class TrainDit(nn.Module):
         # timer
         self.timer = Timer()
 
-    def train(self):
+    def train_model(self):
         # train
         for epoch in range(self.train_cfg.epoches):
             logger.info(f"=================")
@@ -236,9 +239,29 @@ class TrainDit(nn.Module):
         temporary_path.replace(out_path)
 
 
-if __name__ == "__main__":
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--resume", action="store_true", help="resume from ckpt")
+
+    args = parser.parse_args()
+
     fm_cfg = FMConfig()
-    train_dit = TrainDit(fm_cfg=fm_cfg)
-    train_dit.train()
-    train_dit.save_checkpoint(train_dit.flow_net_path)
-    train_dit.sample(train_dit.flow_net)
+    train_flow_matching: TrainFlowMatching = TrainFlowMatching(fm_cfg=fm_cfg)
+
+    if args.resume:
+        ckpt_path = os.path.join(
+            fm_cfg.vae_train_cfg.output_dir, "flow_matching_best.pt"
+        )
+        ckpt = torch.load(ckpt_path)
+        train_flow_matching.flow_net.load_state_dict(ckpt["model"])
+        train_flow_matching.optimizer.load_state_dict(ckpt["optimizer"])
+        train_flow_matching.train_meta.next_epoch = ckpt["next_epoch"]
+        train_flow_matching.train_meta.best_loss = ckpt["best_loss"]
+
+    # train
+    train_flow_matching.train()
+    train_flow_matching.train_model()
+
+
+if __name__ == "__main__":
+    main()
