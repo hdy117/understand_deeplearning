@@ -174,7 +174,10 @@ class TrainFlowMatching(nn.Module):
             ):
                 self.train_meta.best_loss = mean_loss
                 self.save_checkpoint(self.flow_net_path_best)
-                self.sample(flow_net=self.flow_net)
+                self.sample(
+                    flow_net=self.flow_net,
+                    img_path=self.flow_net_eval_img_best,
+                )
                 logger.info(f"best loss:{self.train_meta.best_loss}")
             logger.info(f"epoch:{epoch}, mean loss:{mean_loss:.6f}")
 
@@ -184,13 +187,13 @@ class TrainFlowMatching(nn.Module):
 
             # save ckpt and sample
             self.save_checkpoint(self.flow_net_path)
-            self.sample(flow_net=self.flow_net)
+            self.sample(flow_net=self.flow_net, img_path=self.flow_net_eval_img)
 
             elsaped = self.timer.stop()
             logger.info(f"""epoch:{epoch} time:{elsaped} s""")
 
     @torch.inference_mode()
-    def sample(self, flow_net: FlowMatching):
+    def sample(self, flow_net: FlowMatching, img_path: str = None):
         # eval only
         flow_net.eval()
 
