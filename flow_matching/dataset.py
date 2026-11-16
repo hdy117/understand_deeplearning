@@ -52,7 +52,7 @@ class DataHolder:
                 # load image
                 try:
                     image_tensor = (
-                        torchvision.io.read_image(img_full_path).float() / 255.5
+                        torchvision.io.read_image(img_full_path).float() / 255.0
                     )
                     # one hot label
                     category_index = category_to_index[category]

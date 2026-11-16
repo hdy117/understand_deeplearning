@@ -185,7 +185,11 @@ class FlowMatching(nn.Module):
         )
 
         # The public flow interface stays in VAE latent space.
-        self.output_proj = nn.Linear(self.d_model, self.latent_channels)
+        self.output_proj = nn.Sequential(
+            nn.Linear(self.d_model, self.d_model),
+            nn.GELU(),
+            nn.Linear(self.d_model, self.latent_channels),
+        )
         self.to(device)
 
     def forward(
