@@ -81,6 +81,40 @@ class TimestepEmbedding(nn.Module):
         return self.mlp(embedding)
 
 
+class SinusoidalPositionEmbedding(nn.Module):
+    """Standard fixed sinusoidal encoding for a sequence of token positions."""
+
+    def __init__(
+        self,
+        num_positions: int,
+        embedding_dim: int,
+        *,
+        max_period: float = 10_000.0,
+    ):
+        super().__init__()
+        if num_positions <= 0:
+            raise ValueError("num_positions must be positive")
+        if embedding_dim <= 0 or embedding_dim % 2 != 0:
+            raise ValueError("embedding_dim must be a positive even number")
+        if max_period <= 0:
+            raise ValueError("max_period must be positive")
+
+        positions = torch.arange(num_positions, dtype=torch.float32)[:, None]
+        div_term = torch.exp(
+            torch.arange(0, embedding_dim, 2, dtype=torch.float32)
+            * (-math.log(max_period) / embedding_dim)
+        )
+        embedding = torch.empty(num_positions, embedding_dim)
+        embedding[:, 0::2] = torch.sin(positions * div_term)
+        embedding[:, 1::2] = torch.cos(positions * div_term)
+
+        # Standard sinusoidal encodings are constants, not model weights.
+        self.register_buffer("embedding", embedding[None, :, :], persistent=False)
+
+    def forward(self) -> torch.Tensor:
+        return self.embedding
+
+
 class FlowMatching(nn.Module):
     def __init__(
         self,
@@ -129,6 +163,12 @@ class FlowMatching(nn.Module):
 
         # VAE tokens are narrow [B, S, 4], so project them to Transformer width.
         self.input_proj = nn.Linear(self.latent_channels, self.d_model)
+        # An 8x8 VAE latent grid becomes 64 tokens. The fixed sinusoidal
+        # coordinates make the attention layers aware of token order.
+        self.position_embed = SinusoidalPositionEmbedding(
+            num_positions=64,
+            embedding_dim=self.d_model,
+        )
         self.time_embed = TimestepEmbedding(self.d_model)
         self.label_embed = nn.Linear(self.category_num, self.d_model)
 
@@ -238,7 +278,16 @@ class FlowMatching(nn.Module):
             logger.error(err)
             raise ValueError(err)
 
-        hidden = self.input_proj(xt)
+        expected_tokens = self.position_embed.embedding.shape[1]
+        if xt.shape[1] != expected_tokens:
+            err = (
+                f"xt must contain {expected_tokens} latent tokens, "
+                f"but got {xt.shape[1]}."
+            )
+            logger.error(err)
+            raise ValueError(err)
+
+        hidden = self.input_proj(xt) + self.position_embed()
         condition = self.time_embed(time) + self.label_embed(label_batch)
         hidden = hidden + condition[:, None, :]
         pred_velocity = self.output_proj(self.dit(hidden))

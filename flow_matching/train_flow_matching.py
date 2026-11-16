@@ -75,8 +75,10 @@ class TrainDit(nn.Module):
         )
         self.output_dir = Path(self.fm_cfg.vae_train_cfg.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.flow_net_path = self.output_dir / "flow_matching.pt"
-        self.flow_net_eval_img = self.output_dir / "flow_matching_reconstruction.png"
+        self.flow_net_path = self.output_dir / "flow_matching_epoch.pt"
+        self.flow_net_eval_img = self.output_dir / "flow_matching_epoch.png"
+        self.flow_net_path_best = self.output_dir / "flow_matching_best.pt"
+        self.flow_net_eval_img_best = self.output_dir / "flow_matching_best.png"
         self.train_meta: TrainDitMeta = TrainDitMeta()
 
         # load vae model for encoder and decoder
@@ -120,13 +122,15 @@ class TrainDit(nn.Module):
         self.timer = Timer()
 
     def train(self):
-        self.flow_net.train()
         # train
         for epoch in range(self.train_cfg.epoches):
             logger.info(f"=================")
             logger.info(f"current epoch:{epoch}, total:{self.train_cfg.epoches}")
+
             accu_loss = 0.0
             self.timer.start()
+            self.flow_net.train()
+
             for index, (img_batch, label_batch) in enumerate(self.train_dataloader):
                 # load batches from dataloader and send to device
                 img_batch: torch.Tensor = img_batch.to(self.train_cfg.device)
@@ -138,36 +142,36 @@ class TrainDit(nn.Module):
                 # encode image to latent tokens, [batch, 64, 4]
                 with torch.no_grad():
                     x1 = self.vae.encode_tokens(img_batch)
+
+                # Sample continuous flow time and build the interpolation.
                 x0 = torch.randn_like(x1, device=x1.device)
+                T = torch.rand(B, device=x1.device)
+                xt, target_velocity = self.flow_net.get_xt_and_xt_dot(
+                    x0=x0,
+                    x1=x1,
+                    T=T,
+                )
 
-                for i in range(self.model_cfg.total_steps):
-                    # Sample continuous flow time and build the interpolation.
-                    T = torch.rand(B, device=x1.device)
-                    xt, target_velocity = self.flow_net.get_xt_and_xt_dot(
-                        x0=x0,
-                        x1=x1,
-                        T=T,
-                    )
+                # model predict velocity
+                pred_velocity = self.flow_net.forward(xt, T, label_batch)
 
-                    # model predict velocity
-                    pred_velocity = self.flow_net.forward(xt, T, label_batch)
+                # loss
+                loss = self.loss_fn(pred_velocity, target_velocity)
+                self.optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                self.optimizer.step()
 
-                    # loss
-                    loss = self.loss_fn(pred_velocity, target_velocity)
-                    self.optimizer.zero_grad(set_to_none=True)
-                    loss.backward()
-                    self.optimizer.step()
-
-                    # save train meta
-                    accu_loss = accu_loss + loss.item()
+                # save train meta
+                accu_loss = accu_loss + loss.item()
 
             # save the best
             mean_loss = accu_loss / max(len(self.train_dataloader), 1)
-            if (epoch >= self.train_cfg.epoches * 0.4) and (
+            if (epoch >= self.train_cfg.epoches * 0.6) and (
                 mean_loss < self.train_meta.best_loss
             ):
-                self.train_meta.best_loss = loss.item()
-                self.save_checkpoint()
+                self.train_meta.best_loss = mean_loss
+                self.save_checkpoint(self.flow_net_path_best)
+                self.sample(flow_net=self.flow_net)
                 logger.info(f"best loss:{self.train_meta.best_loss}")
             logger.info(f"epoch:{epoch}, mean loss:{mean_loss:.6f}")
 
@@ -175,26 +179,19 @@ class TrainDit(nn.Module):
             self.scheduler.step()
             self.train_meta.next_epoch = epoch + 1
 
-            # generate image
-            self.eval()
+            # save ckpt and sample
+            self.save_checkpoint(self.flow_net_path)
+            self.sample(flow_net=self.flow_net)
 
             elsaped = self.timer.stop()
             logger.info(f"""epoch:{epoch} time:{elsaped} s""")
 
     @torch.inference_mode()
-    def eval(self):
-        ckpt = torch.load(
-            self.flow_net_path,
-            map_location=self.train_cfg.device,
-            weights_only=True,
-        )
-        flow_net = FlowMatching(
-            model_config=self.model_cfg,
-            device=self.train_cfg.device,
-        )
-        flow_net.load_state_dict(ckpt["model"])
-
+    def sample(self, flow_net: FlowMatching):
+        # eval only
         flow_net.eval()
+
+        # sampling
         one_step = 1.0 / self.model_cfg.total_steps
         batch_size = self.model_cfg.category_num
         token_count = self.vae.latent_size * self.vae.latent_size
@@ -224,9 +221,9 @@ class TrainDit(nn.Module):
         torchvision.utils.save_image(img, self.flow_net_eval_img, nrow=5)
         logger.info(f"save {self.flow_net_eval_img}")
 
-    def save_checkpoint(self):
+    def save_checkpoint(self, out_path: str | Path = None):
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        temporary_path = self.flow_net_path.with_suffix(".pt.tmp")
+        temporary_path = out_path.with_suffix(".pt.tmp")
         torch.save(
             {
                 "next_epoch": self.train_meta.next_epoch,
@@ -236,12 +233,12 @@ class TrainDit(nn.Module):
             },
             temporary_path,
         )
-        temporary_path.replace(self.flow_net_path)
+        temporary_path.replace(out_path)
 
 
 if __name__ == "__main__":
     fm_cfg = FMConfig()
     train_dit = TrainDit(fm_cfg=fm_cfg)
     train_dit.train()
-    train_dit.save_checkpoint()
-    train_dit.eval()
+    train_dit.save_checkpoint(train_dit.flow_net_path)
+    train_dit.sample(train_dit.flow_net)
