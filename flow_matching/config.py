@@ -21,7 +21,7 @@ IMG_SIZE: int = 64
 class FlowMatchingTrainConfig:
     epoches: int = 200
     batch_size: int = 128
-    lr: float = 2e-4
+    lr: float = 1e-3
     device = DEVICE
     img_size: int = IMG_SIZE
     num_workers: int = 16
@@ -72,10 +72,10 @@ class DataConfig:
 
 @dataclass
 class FlowMatchingModelConfig:
-    d_model: int = 168
+    d_model: int = 256
     latent_channels: int = 4  # VAE token feature dimension
     n_layer: int = 8
-    n_head: int = 8
+    n_head: int = 16
     total_steps: int = 100
     sampling_seed: int = 42
     category_num: int = DataConfig.category_num

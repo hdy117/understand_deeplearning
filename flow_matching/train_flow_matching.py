@@ -114,6 +114,11 @@ class TrainFlowMatching(nn.Module):
             T_mult=1,
             eta_min=self.train_cfg.lr * 0.1,
         )
+        # self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        #     optimizer=self.optimizer,
+        #     T_max=self.train_cfg.epoches,
+        #     eta_min=self.train_cfg.lr * 0.1,
+        # )
 
         # timer
         self.timer = Timer()
@@ -156,6 +161,10 @@ class TrainFlowMatching(nn.Module):
                 loss = self.loss_fn(pred_velocity, target_velocity)
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    self.flow_net.parameters(),
+                    max_norm=1.0,
+                )
                 self.optimizer.step()
 
                 # save train meta
@@ -163,7 +172,7 @@ class TrainFlowMatching(nn.Module):
 
             # save the best
             mean_loss = accu_loss / max(len(self.train_dataloader), 1)
-            if (epoch >= self.train_cfg.epoches * 0.6) and (
+            if (epoch >= self.train_cfg.epoches * 0.5) and (
                 mean_loss < self.train_meta.best_loss
             ):
                 self.train_meta.best_loss = mean_loss

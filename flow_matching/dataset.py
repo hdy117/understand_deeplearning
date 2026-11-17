@@ -35,6 +35,7 @@ class DataHolder:
             if os.path.isdir(os.path.join(data_dir, name))
         )
         category_to_index = {name: index for index, name in enumerate(categories)}
+        logger.info(f"category_to_index:{category_to_index}")
 
         # one hot tensor, [10,10]
         one_hot_tensor: torch.Tensor = torch.eye(data_config.category_num).float()
