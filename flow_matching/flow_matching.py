@@ -202,7 +202,7 @@ class FlowMatching(nn.Module):
 
         Args:
             xt (torch.Tensor): latent tokens [batch, n_token, latent_channels]
-            T (torch.Tensor): continuous time [batch] or [batch, 1]
+            T (torch.Tensor): continuous time [batch, 1]
             label_batch (torch.Tensor): one-hot class labels [batch, category_num]
 
         Returns:
@@ -222,37 +222,22 @@ class FlowMatching(nn.Module):
             logger.error(err)
             raise ValueError(err)
 
-        # T is continuous time, not a discrete class index.
-        if T.ndim != 1 and T.ndim != 2:
-            err: str = f"T be dim [batch] or [batch, 1], but got {T.shape}."
-            logger.error(err)
-            raise ValueError(err)
-
-        if T.ndim == 2 and T.shape[1] != 1:
-            err = f"T with rank 2 must have shape [batch, 1], but got {T.shape}."
-            logger.error(err)
-            raise ValueError(err)
-
-        time = T.reshape(-1)
-        if time.shape[0] != xt.shape[0]:
-            err = f"T batch size must be {xt.shape[0]}, " f"but got {time.shape[0]}."
-            logger.error(err)
-            raise ValueError(err)
-        if time.device != xt.device:
+        # T must be a floating-point time column on xt's device.
+        if (
+            T.ndim != 2
+            or T.shape != (xt.shape[0], 1)
+            or T.device != xt.device
+            or not T.is_floating_point()
+            or not torch.all((T >= 0.0) & (T <= 1.0))
+        ):
             err = (
-                f"xt and T must be on the same device, "
-                f"but got {xt.device} and {time.device}."
+                f"T must be floating with shape [{xt.shape[0]}, 1], "
+                f"values in [0, 1], and device {xt.device}; got shape "
+                f"{tuple(T.shape)}, dtype {T.dtype}, and device {T.device}."
             )
             logger.error(err)
             raise ValueError(err)
-        if not time.is_floating_point():
-            err = f"T must be floating point, but got {time.dtype}."
-            logger.error(err)
-            raise ValueError(err)
-        if time.min().item() < 0.0 or time.max().item() > 1.0:
-            err = f"T should be within [0, 1], but got {time}."
-            logger.error(err)
-            raise ValueError(err)
+        time = T[:, 0]
 
         if label_batch.ndim != 2 or label_batch.shape != (
             xt.shape[0],
@@ -334,7 +319,7 @@ if __name__ == "__main__":
     # get x_t
     for i in range(model_cfg.total_steps):
         time = torch.full(
-            (x1.shape[0],),
+            (x1.shape[0], 1),
             i / model_cfg.total_steps,
             device=device,
         )

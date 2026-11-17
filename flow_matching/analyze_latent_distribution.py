@@ -270,7 +270,7 @@ class LatentDistributionAnalyzer:
                     # 模型训练时的时间范围是 [0, 1)，所以最后一次使用
                     # t=(steps-1)/steps，并把状态推进到近似 t=1。
                     time = torch.full(
-                        (current,),
+                        (current, 1),
                         step / self.sampling_steps,
                         device=self.device,
                     )

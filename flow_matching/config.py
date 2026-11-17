@@ -72,10 +72,10 @@ class DataConfig:
 
 @dataclass
 class FlowMatchingModelConfig:
-    d_model: int = 256
+    d_model: int = 4
     latent_channels: int = 4  # VAE token feature dimension
-    n_layer: int = 8
-    n_head: int = 16
+    n_layer: int = 6
+    n_head: int = 1
     total_steps: int = 100
     sampling_seed: int = 42
     category_num: int = DataConfig.category_num

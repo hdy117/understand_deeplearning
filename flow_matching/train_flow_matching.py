@@ -147,7 +147,7 @@ class TrainFlowMatching(nn.Module):
 
                 # Sample continuous flow time and build the interpolation.
                 x0 = torch.randn_like(x1, device=x1.device)
-                T = torch.rand(B, device=x1.device)
+                T = torch.rand((B, 1), device=x1.device)
                 xt, target_velocity = self.flow_net.get_xt_and_xt_dot(
                     x0=x0,
                     x1=x1,
@@ -222,7 +222,7 @@ class TrainFlowMatching(nn.Module):
         # Integrate the learned velocity field from t=0 to t=1.
         for step in range(self.model_cfg.total_steps):
             T = torch.full(
-                size=[batch_size],
+                size=[batch_size, 1],
                 fill_value=step * one_step,
                 device=self.train_cfg.device,
             )
