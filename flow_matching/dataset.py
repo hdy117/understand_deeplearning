@@ -49,21 +49,31 @@ class DataHolder:
                 self.category.append(category)
                 self.path.append(img_full_path)
 
-                image_tensor, label_one_hot = None, None
-                # load image
+                # Load image and fail loudly so a wrong-size export cannot be
+                # silently skipped.
                 try:
                     image_tensor = (
                         torchvision.io.read_image(img_full_path).float() / 255.0
                     )
-                    # one hot label
-                    category_index = category_to_index[category]
-                    label_one_hot: torch.Tensor = one_hot_tensor[category_index].clone()
-
-                    # save tensors
-                    self.img_tensor.append(image_tensor)
-                    self.label_tensor.append(label_one_hot)
                 except Exception as e:
-                    logger.error(f"error:{str(e)}")
+                    raise ValueError(f"failed to load image {img_full_path}") from e
+
+                expected_shape = (
+                    3,
+                    data_config.image_size,
+                    data_config.image_size,
+                )
+                if tuple(image_tensor.shape) != expected_shape:
+                    raise ValueError(
+                        f"{img_full_path} has shape {tuple(image_tensor.shape)}; "
+                        f"expected {expected_shape}"
+                    )
+
+                # One hot label and tensors are appended only after validation.
+                category_index = category_to_index[category]
+                label_one_hot: torch.Tensor = one_hot_tensor[category_index].clone()
+                self.img_tensor.append(image_tensor)
+                self.label_tensor.append(label_one_hot)
 
         # check
         if len(self.img_tensor) <= 0:

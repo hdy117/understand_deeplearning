@@ -17,7 +17,7 @@ Pixel U-Net Flow 已经证明：完全绕开 VAE 可以避免 latent decoder man
 3. 使用 1000-step linear DDPM 和 ε-prediction。
 4. 与 Pixel U-Net Flow 使用相同数据、batch、优化器和 40 epoch 预算。
 5. 比较两者的多类别生成图、多样本、低层像素统计和采样成本。
-6. 不覆盖现有 Pixel Flow、latent Flow、latent DDPM 或 VAE 产物。
+6. 不覆盖现有 Pixel Flow、Transformer latent Flow 或 VAE 产物。
 
 ## 非目标
 

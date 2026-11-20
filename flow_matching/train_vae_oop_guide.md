@@ -12,17 +12,21 @@
 
 ## 1. 训练器在做什么
 
-VAE 负责把图像编码成连续 latent，再从 latent 解码回图像。默认输入是 `64 x 64` RGB；编码器输出通道数为 `4`、空间尺寸为 `8 x 8` 的 Gaussian posterior 参数，因此单张图的 latent 形状是 `[4, 8, 8]`。训练 loss 由两部分组成：
+VAE 负责把图像编码成连续 latent，再从 latent 解码回图像。默认输入是 `32 x 32` RGB；编码器输出通道数为 `32`、空间尺寸为 `8 x 8` 的 Gaussian posterior 参数，因此单张图的 latent 形状是 `[32, 8, 8]`。训练 loss 在 MSE、SSIM 和 LPIPS 三项重建目标之外，再加入 KL 正则：
 
 $$
 \mathcal{L}
 =
 \operatorname{MSE}(\hat{\mathbf{x}},\mathbf{x})
+\;
+0.1\bigl(1-\operatorname{SSIM}(\hat{\mathbf{x}},\mathbf{x})\bigr)
+\;
+0.1\operatorname{LPIPS}(\hat{\mathbf{x}},\mathbf{x})
 \;+\;
 \lambda_{\mathrm{KL}}\mathcal{L}_{\mathrm{KL}}.
 $$
 
-重建项要求输出图像接近输入，KL 项约束 encoder 的 posterior 靠近标准正态。`train_vae.py` 的职责不是重复定义这套数学，而是组织每个 epoch 的训练、验证、日志、图片输出和 checkpoint。
+前三个重建项分别约束逐像素误差、局部结构和感知特征，KL 项约束 encoder 的 posterior 靠近标准正态。`train_vae.py` 的职责不是重复定义这套数学，而是组织每个 epoch 的训练、验证、日志、图片输出和 checkpoint。
 
 训练完成后的模型还有第二个使用场景：flow matching 可以通过 `VAE.encode_tokens()` 把 latent 变成 token，再通过 `decode_tokens()` 解码生成的 token。训练脚本保留 checkpoint 中的模型结构和图像尺寸，就是为了让这两个接口能在训练后被准确恢复。
 
@@ -34,13 +38,13 @@ $$
 
 | 符号 | 读法与含义 | 当前代码中的对应物 |
 |---|---|---|
-| \(\mathbf{x}\) | 一张真实图像；粗体表示由多个像素值组成的向量或张量 | DataLoader 提供的 `images`，单样本形状 `[3,64,64]` |
+| \(\mathbf{x}\) | 一张真实图像；粗体表示由多个像素值组成的向量或张量 | DataLoader 提供的 `images`，单样本形状 `[3,32,32]` |
 | \(\hat{\mathbf{x}}\) | decoder 从 latent 重建出的图像 | `reconstruction` |
-| \(\mathbf{z}\) | latent；图像经过 encoder 后的连续隐藏表示 | `latent`，单样本形状 `[4,8,8]` |
+| \(\mathbf{z}\) | latent；图像经过 encoder 后的连续隐藏表示 | `latent`，单样本形状 `[32,8,8]` |
 | \(\phi\) | encoder 的全部可学习参数 | 主要是 `VAE.encoder` 中的权重 |
 | \(\theta\) | decoder 的全部可学习参数 | 主要是 `VAE.decoder` 中的权重 |
 | \(q_{\phi}(\mathbf{z}\mid\mathbf{x})\) | encoder 对给定图像给出的 latent 后验分布 | `encode()` 产生的 `mean` 与 `logvar` 共同定义它 |
-| \(\boldsymbol{\mu}\) | Gaussian posterior 的均值 | `mean`，形状 `[B,4,8,8]` |
+| \(\boldsymbol{\mu}\) | Gaussian posterior 的均值 | `mean`，形状 `[B,32,8,8]` |
 | \(\boldsymbol{\sigma}^{2}\) | Gaussian posterior 的 variance；逐元素平方后形如 \(\sigma^2\) | `logvar.exp()` |
 | \(\log\boldsymbol{\sigma}^{2}\) | log-variance，网络实际输出的稳定参数化 | `logvar`，形状与 `mean` 相同 |
 | \(\boldsymbol{\epsilon}\) | 从标准正态采出的随机噪声 | `torch.randn_like(mean)` |
@@ -50,7 +54,7 @@ $$
 | \(\lambda_{\mathrm{KL}}\) | KL 项在总 loss 中的权重 | `VAETrainConfig.kl_weight`，当前默认 `1e-4` |
 | \(B\) | 一次处理的 batch size | 默认配置中是 `batch_size`，实际可使用不同值 |
 
-这里的粗体不是装饰。图像、latent、mean 和 logvar 都是逐元素张量，而不是单个标量；因此 \(\mu_i\)、\(\sigma_i^2\) 表示把张量展平后第 \(i\) 个元素对应的均值和 variance。当前默认 latent 共有 \(4\times8\times8=256\) 个元素，所以 KL 会对这 256 个位置求和。
+这里的粗体不是装饰。图像、latent、mean 和 logvar 都是逐元素张量，而不是单个标量；因此 \(\mu_i\)、\(\sigma_i^2\) 表示把张量展平后第 \(i\) 个元素对应的均值和 variance。当前默认 latent 共有 \(32\times8\times8=2048\) 个元素，所以 KL 会对这 2048 个位置求和。
 
 $$
 q_{\phi}(\mathbf{z}\mid\mathbf{x})
@@ -98,7 +102,7 @@ q_{\phi}(\mathbf{z}\mid\mathbf{x})
 \right).
 $$
 
-负号修饰的是 reconstruction log-likelihood，所以最大化它的对数似然等价于最小化这一项损失；KL 描述了近似后验与先验的差异，同样是非负项。两者相加就是负 ELBO，训练时一起最小化。代码用 MSE 代理第一项，并取标准正态先验 \(p(\mathbf{z})=\mathcal{N}(\mathbf{0},\mathbf{I})\)，于是 KL 有闭式解：
+负号修饰的是 reconstruction log-likelihood，所以最大化它的对数似然等价于最小化这一项损失；KL 描述了近似后验与先验的差异，同样是非负项。两者相加就是负 ELBO，训练时一起最小化。代码以 MSE 作为主重建项，再叠加 SSIM 与 LPIPS 约束，并取标准正态先验 \(p(\mathbf{z})=\mathcal{N}(\mathbf{0},\mathbf{I})\)，于是 KL 有闭式解：
 
 $$
 D_{\mathrm{KL}}
@@ -109,7 +113,7 @@ D_{\mathrm{KL}}
 \right).
 $$
 
-逐项对应到代码，可以这样读：常数 \(1\) 是 `1.0`，\(\log\sigma_i^2\) 是 `logvar`，\(\mu_i^2\) 是 `mean.square()`，\(\sigma_i^2\) 是 `logvar.exp()`。`sum(dim=(1,2,3))` 对每个样本的 4 个 channel 与 \(8\times8\) 个空间位置求和，因此先把每个样本变成单个标量；随后 `kl_per_batch.mean()` 再对 batch 求平均。最终 `kl_loss` 的单位是“KL sum per sample”，而不是对 256 个坐标再取平均。
+逐项对应到代码，可以这样读：常数 \(1\) 是 `1.0`，\(\log\sigma_i^2\) 是 `logvar`，\(\mu_i^2\) 是 `mean.square()`，\(\sigma_i^2\) 是 `logvar.exp()`。`sum(dim=(1,2,3))` 对每个样本的 32 个 channel 与 \(8\times8\) 个空间位置求和，因此先把每个样本变成单个标量；随后 `kl_per_batch.mean()` 再对 batch 求平均。最终 `kl_loss` 的单位是“KL sum per sample”，而不是对 2048 个坐标再取平均。
 
 总损失仍按最初的定义组合：
 
@@ -125,17 +129,17 @@ $$
 
 还有一层概率解释值得放在这里。后验 \(q_{\phi}(\mathbf{z}\mid\mathbf{x})\) 是“给定图片以后，latent 大概在哪里”；先验 \(p(\mathbf{z})=\mathcal{N}(\mathbf{0},\mathbf{I})\) 是“编码之前，整个 latent 空间应该是什么样”。KL 项把不同图片的后验拉向同一个先验附近，从而让采样空间连贯。可是 KL 并不等于“保证所有样本编码互不重叠”：两张图仍可能拥有相近的 mean，尤其在 KL 权重很小或 latent 容量不足时。因此，重建图只说明 decoder 能把某条 latent path 拉回图像，不自动说明 latent 空间适合任意插值。
 
-## 3. 为什么默认 latent 是 `[4, 8, 8]`
+## 3. 为什么默认 latent 是 `[32, 8, 8]`
 
-`[4, 8, 8]` 不是卷积“碰巧得到”的形状，而是三个配置和一条尺寸链共同决定的结果：
+`[32, 8, 8]` 不是卷积“碰巧得到”的形状，而是三个配置和一条尺寸链共同决定的结果：
 
 | 维度 | 数值 | 直接来源 | 含义 |
 |---|---:|---|---|
-| channel | `4` | `VAEConfig.latent_channels` | 每个空间位置保留多少个连续 latent 特征 |
-| height | `8` | `64 / downsample_factor` | 图像高度经过三次 2 倍缩小 |
-| width | `8` | `64 / downsample_factor` | 图像宽度经过三次 2 倍缩小 |
+| channel | `32` | `VAEConfig.latent_channels` | 每个空间位置保留多少个连续 latent 特征 |
+| height | `8` | `32 / downsample_factor` | 图像高度经过两次 2 倍缩小 |
+| width | `8` | `32 / downsample_factor` | 图像宽度经过两次 2 倍缩小 |
 
-默认 `image_size=64`、`downsample_factor=8`，而 encoder 的四个 block 中，第一个 `stride=1`，后面三个 `stride=2`。卷积块的 kernel 是 `3`、padding 是 `1`，所以每次 stride-2 卷积后空间边长按
+默认 `image_size=32`、`downsample_factor=4`，encoder 的四个 block 使用 `(1, 2, 2, 1)` 的 stride。卷积块的 kernel 是 `3`、padding 是 `1`，所以每次 stride-2 卷积后空间边长按
 
 $$
 H_{\text{out}}
@@ -147,22 +151,22 @@ H_{\text{out}}
 \frac{H_{\text{in}}}{2}
 $$
 
-缩小。连续应用三次，`64 -> 32 -> 16 -> 8`。于是 encoder 最后一个 block 输出的空间网格是 `[B, 256, 8, 8]`。最后的 `1 x 1` 卷积把 `256` 个通道映射到 `latent_channels * 2 = 8`，再按 channel 一分为二，得到 `[B, 4, 8, 8]` 的 `mean` 和 `logvar`。latent 本身与它们同形，所以单个样本是 `[4, 8, 8]`。
+缩小。默认尺寸链是 `32 -> 32 -> 16 -> 8 -> 8`。encoder 最后一个 block 输出的空间网格是 `[B, 256, 8, 8]`。最后的 `1 x 1` 卷积把 `256` 个通道映射到 `latent_channels * 2 = 64`，再按 channel 一分为二，得到 `[B, 32, 8, 8]` 的 `mean` 和 `logvar`。latent 本身与它们同形，所以单个样本是 `[32, 8, 8]`。
 
 把整条尺寸链画出来，会比只看最终数字更容易核对：
 
 ```mermaid
 flowchart LR
-    IMAGE["image<br/>B x 3 x 64 x 64"]
-    BLOCK0["block 0<br/>stride 1<br/>B x 32 x 64 x 64"]
-    BLOCK1["block 1<br/>stride 2<br/>B x 64 x 32 x 32"]
-    BLOCK2["block 2<br/>stride 2<br/>B x 128 x 16 x 16"]
-    BLOCK3["block 3<br/>stride 2<br/>B x 256 x 8 x 8"]
-    PARAMS["1 x 1 conv<br/>B x 8 x 8 x 8"]
-    MEAN["mean<br/>B x 4 x 8 x 8"]
-    LOGVAR["logvar<br/>B x 4 x 8 x 8"]
-    LATENT["latent<br/>B x 4 x 8 x 8"]
-    DECODE["decoder<br/>B x 3 x 64 x 64"]
+    IMAGE["image<br/>B x 3 x 32 x 32"]
+    BLOCK0["block 0<br/>stride 1<br/>B x 32 x 32 x 32"]
+    BLOCK1["block 1<br/>stride 2<br/>B x 64 x 16 x 16"]
+    BLOCK2["block 2<br/>stride 2<br/>B x 128 x 8 x 8"]
+    BLOCK3["block 3<br/>stride 1<br/>B x 256 x 8 x 8"]
+    PARAMS["1 x 1 conv<br/>B x 64 x 8 x 8"]
+    MEAN["mean<br/>B x 32 x 8 x 8"]
+    LOGVAR["logvar<br/>B x 32 x 8 x 8"]
+    LATENT["latent<br/>B x 32 x 8 x 8"]
+    DECODE["decoder<br/>B x 3 x 32 x 32"]
 
     IMAGE --> BLOCK0 --> BLOCK1 --> BLOCK2 --> BLOCK3 --> PARAMS
     PARAMS --> MEAN
@@ -172,29 +176,29 @@ flowchart LR
     LATENT --> DECODE
 ```
 
-图中前三个空间缩小点分别跨过 `fold`，所以每跨一次，feature 的空间分辨率减半、channel 数加倍；最后一个 `1 x 1` 卷积只调整 channel，不改变 `8 x 8` 网格。`latent_channels=4` 决定最终每个位置只留 4 个 latent 数值，因此 `8` 个输出 channel 正好分成 `mean` 和 `logvar` 各 4 个。
+前两个 stride-2 stage 把空间分辨率减半、channel 数加倍；后两个 stage 保持 `8 x 8` 网格。最后一个 `1 x 1` 卷积把 `256` 映射到 `64` 个 posterior 参数通道。`latent_channels=32` 决定最终每个位置有 32 个 latent 数值，因此 `64` 个输出 channel 正好分成 `mean` 和 `logvar` 各 32 个。
 
-“一分为二”不是为了造出两份 latent，而是让每个 latent 位置同时拥有 Gaussian 的均值和 log-variance。`4` 是参数量上的选择，`8 x 8` 是空间压缩上的选择；把二者分开看，比死记一个三维形状更重要。如果把 `image_size` 改成 `128`，其他配置不变，空间尺寸会变成 `16 x 16`；如果只想改空间压缩率，应改 `downsample_factor` 并同步修改对应的 stride 结构，而不是只改一个配置数字。
+“一分为二”不是为了造出两份 latent，而是让每个 latent 位置同时拥有 Gaussian 的均值和 log-variance。`32` 是 channel 容量，`8 x 8` 是空间压缩结果；把二者分开看，比死记一个三维形状更重要。如果只想改空间压缩率，应改 `downsample_factor` 并让 encoder stride 与 decoder upsample 对称更新。
 
-decoder 走的是对称但不等同的路径。它先把 `[B, 4, 8, 8]` 升到 256 通道，然后做三次 nearest 2x upsample：`8 -> 16 -> 32 -> 64`，最后用卷积投影回 RGB。`padding=1` 和 `kernel_size=3` 在这里保持偶数尺寸的边长，因此 encoder 与 decoder 的接口能够闭合。
+decoder 走的是对称但不等同的路径。它先把 `[B, 32, 8, 8]` 升到 256 通道，然后根据 encoder stride 逆序执行两次 nearest 2x upsample：`8 -> 16 -> 32`，最后用卷积投影回 RGB。
 
-这个 `[4, 8, 8]` 张量共有
+这个 `[32, 8, 8]` 张量共有
 
 $$
-4\times8\times8=256
+32\times8\times8=2048
 $$
 
 个连续数值。把 channel 轴移到最后，会得到
 
 $$
-[B,4,8,8]
+[B,32,8,8]
 \longrightarrow
-[B,64,4],
+[B,64,32],
 $$
 
-即每个空间位置一个 4 维 token，共 64 个 token。这正是 `VAE.encode_tokens()` 做的事情：`flatten(start_dim=2).transpose(1, 2)` 先把 `8 x 8` 摊平成 64 个位置，再把 4 个 latent channel 变成 token feature。flow matching 在这里处理的不是原始 `3 x 64 x 64 = 12288` 个像素，而是 `64 x 4 = 256` 个 latent 数值，随后通过 `decode_tokens()` 还原成图像。
+即每个空间位置一个 32 维 token，共 64 个 token。这正是 `VAE.encode_tokens()` 做的事情：`flatten(start_dim=2).transpose(1, 2)` 先把 `8 x 8` 摊平成 64 个位置，再把 32 个 latent channel 变成 token feature。flow matching 在这里处理的不是原始 `3 x 32 x 32 = 3072` 个像素，而是 `64 x 32 = 2048` 个 latent 数值，随后通过 `decode_tokens()` 还原成图像。
 
-latent 的压缩既不是免费的，也不是简单的“省显存”。`8 x 8` 决定了每个 latent cell 要概括一块 `8 x 8` 像素区域，channel `4` 决定它对局部纹理、颜色和结构能保留多少信息。缩小空间尺寸会让 token 序列更短，降低后续 flow matching 的序列长度；但压缩过强会丢失细节，过强 KL 又会把有用信息压向先验。因此“为什么是 `[4,8,8]`”最终是一个接口折中：既让 VAE 能近似重建，又让下游 Transformer 面对足够短的 token 序列。
+latent 的压缩既不是免费的，也不是简单的“省显存”。`8 x 8` 决定了每个 latent cell 要概括一块 `4 x 4` 像素区域，channel `32` 决定它对局部纹理、颜色和结构能保留多少信息。缩小空间尺寸会让 token 序列更短，降低后续 flow matching 的序列长度；但压缩过强会丢失细节，过强 KL 又会把有用信息压向先验。因此 `[32,8,8]` 是当前对重建质量和生成序列长度的折中。
 
 ## 4. 从多对象结构压缩到单类
 
@@ -384,7 +388,7 @@ flowchart TB
     LATENT_SAMPLE --> DECODE["decode"]
     LATENT_MEAN --> DECODE
     DECODE --> RECON["reconstruction"]
-    RECON --> LOSS["MSE + weighted KL"]
+    RECON --> LOSS["reconstruction + weighted KL"]
     MU --> LOSS
     LOGVAR --> LOSS
     LOSS --> METRICS["LossMetrics after loader pass"]
@@ -392,7 +396,7 @@ flowchart TB
     RECON -->|validation first batch| GRID["reconstruction comparison"]
 ```
 
-用默认形状走一遍：DataLoader 提供 `images` 为 `[B, 3, 64, 64]`；encoder 输出的参数图先得到 `[B, 8, 8, 8]`，再按 channel 切成两个 `[B, 4, 8, 8]` 的 `mean` 与 `logvar`。训练分支通过重参数化得到 `[B, 4, 8, 8]` 的 latent，验证分支直接使用 posterior mean。最终重建图恢复为 `[B, 3, 64, 64]`。
+用默认形状走一遍：DataLoader 提供 `images` 为 `[B, 3, 32, 32]`；encoder 输出的参数图先得到 `[B, 64, 8, 8]`，再按 channel 切成两个 `[B, 32, 8, 8]` 的 `mean` 与 `logvar`。训练分支通过重参数化得到 `[B, 32, 8, 8]` 的 latent，验证分支直接使用 posterior mean。最终重建图恢复为 `[B, 3, 32, 32]`。
 
 训练分支的执行顺序是 `zero_grad -> forward -> vae_loss -> scaler.scale().backward() -> unscale -> clip -> scaler.step() -> scaler.update()`。验证分支位于 `@torch.inference_mode()` 中，不构造 autograd 图；它会保存第一个验证 batch 的原图和重建图，用于 `latest_reconstruction.png` 以及可能更新的 best 图片。
 
@@ -439,13 +443,13 @@ sequenceDiagram
 
 `train_one_epoch()` 首先调用 `model.train()`；`evaluate()` 首先调用 `model.eval()`。即使当前 VAE 主要使用 GroupNorm，显式 mode 切换仍然正确，也让以后加入 Dropout 或 BatchNorm 时不需要重新设计调用方。
 
-训练和验证都先把每个 batch 的 `loss`、`reconstruction` 和 `kl` 三个标量累计起来，再除以 batch 数量。训练 loader 使用 `drop_last=True`，各 batch 大小相同；验证 loader 可能保留较小尾批，因此这里的验证结果是“batch 均值的均值”，不保证等价于按样本数严格加权的全局均值。这是现有语义，文档不把它误称为样本加权平均。聚合完成后才创建一次 `LossMetrics`，因此 frozen dataclass 不会进入热路径的每条样本循环。
+训练和验证都先把每个 batch 的 `loss`、`reconstruction`、`mse`、`ssim`、`lpips` 和 `kl` 六个标量累计起来，再除以 batch 数量。训练 loader 使用 `drop_last=True`，各 batch 大小相同；验证 loader 可能保留较小尾批，因此这里的验证结果是“batch 均值的均值”，不保证等价于按样本数严格加权的全局均值。这是现有语义，文档不把它误称为样本加权平均。聚合完成后才创建一次 `LossMetrics`，因此 frozen dataclass 不会进入热路径的每条样本循环。
 
 两个阶段结束后，训练器先读取本轮实际使用的 learning rate，再推进 scheduler。best 判定发生在 scheduler step 之后，并使用严格小于 `<`；相同验证 loss 不会反复覆盖最佳 checkpoint。
 
 ## 10. checkpoint 与 resume
 
-`save_checkpoint()` 仍写出与之前兼容的七个字段：
+`save_checkpoint()` 写出九个可追溯字段：
 
 | 字段 | 用途 |
 |---|---|
@@ -454,7 +458,9 @@ sequenceDiagram
 | `model` | VAE state dict |
 | `optimizer` | AdamW state dict |
 | `vae_config` | 恢复模型的通道和降采样结构 |
+| `latent_channels` | 恢复最终 latent 宽度 |
 | `image_size` | 恢复输入和 latent 空间布局 |
+| `reconstruction_weights` | 记录 KL、L1、SSIM、LPIPS 的实际权重 |
 | `data_config` | 训练数据路径快照 |
 
 文件写入使用同目录临时文件加 `Path.replace()`。目标文件不会在 `torch.save()` 中途被留下半份内容，因此进程中断后，`vae_latest.pt` 要么还是旧的完整 checkpoint，要么已经是新的完整 checkpoint。

@@ -39,16 +39,18 @@ latent channel 分布，而不是像素分布。
 Example
 -------
 python analyze_latent_distribution.py \
-    --checkpoint outputs/flow_matching_epoch.pt \
+    --checkpoint outputs_flow_transformer_latent32_ds4_bs512_e200/flow_matching_best.pt \
+    --vae-checkpoint outputs_vae_latent32_ds4_ssim01_lpips01_bs512_e200/vae_best.pt \
     --max-real 512 \
     --generated 512 \
-    --output outputs/latent_distribution.json
+    --output outputs_flow_transformer_latent32_ds4_bs512_e200/latent_distribution.json
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
@@ -65,7 +67,7 @@ from vae import VAE, load_vae_from_ckpt
 class LatentStats:
     """展开 token 维度后，每个 latent channel 的摘要统计。
 
-    一个 latent 的形状是 ``[N, 64, 4]``。这里不保存每个 token 的完整
+    一个 latent 的形状是 ``[N, tokens, channels]``。这里不保存每个 token 的完整
     分布，而是把前两维展开，得到每个 channel 的总体统计，便于类别间
     快速比较。
     """
@@ -116,10 +118,10 @@ FIELD_DESCRIPTIONS = {
     "generated_outside_real_3sigma": "生成值落在真实均值 ± 3 倍真实标准差之外的比例。",
     "real_roundtrip_rmse": "真实 latent 经过 decode→encode 后的 RMSE，作为 VAE 自身误差基线。",
     "generated_roundtrip_rmse": "生成 latent 经过 decode→encode 后的 RMSE；明显高于 real-roundtrip 表示偏离 VAE latent manifold。",
-    "token_channel_mean_abs_error": "[64][4]；每个空间 token、每个 channel 的均值绝对差。用于发现空间位置误差。",
-    "token_channel_std_ratio": "[64][4]；每个空间 token、每个 channel 的生成/真实标准差比例。",
-    "token_mean_abs_error": "[64]；每个 token 对四个 channel 的 mean_abs_error 平均值。",
-    "token_std_ratio": "[64]；每个 token 对四个 channel 的 std_ratio 平均值。",
+    "token_channel_mean_abs_error": "[tokens][channels]；每个空间 token、每个 channel 的均值绝对差。",
+    "token_channel_std_ratio": "[tokens][channels]；每个空间 token、每个 channel 的生成/真实标准差比例。",
+    "token_mean_abs_error": "[tokens]；每个 token 对所有 channel 的 mean_abs_error 平均值。",
+    "token_std_ratio": "[tokens]；每个 token 对所有 channel 的 std_ratio 平均值。",
     "worst_mean_error_token": "mean_abs_error 最大的 token 下标，token 顺序与 VAE flatten 顺序一致。",
     "worst_mean_error_value": "最差 token 的平均均值误差。",
     "lowest_std_ratio_token": "std_ratio 最低的 token 下标。",
@@ -152,30 +154,59 @@ class LatentDistributionAnalyzer:
         self.device = torch.device(device)
         self.batch_size = batch_size
         self.seed = seed
-        self.model_cfg: FlowMatchingModelConfig = cfg.fm_model_cfg
-        self.sampling_steps = sampling_steps or self.model_cfg.total_steps
+        self.model_cfg: FlowMatchingModelConfig
 
         self.vae: VAE = load_vae_from_ckpt(str(vae_checkpoint))
         self.vae.to(self.device).eval()
-
-        self.flow = FlowMatching(
-            model_config=self.model_cfg,
-            device=self.device,
-        ).eval()
         checkpoint = torch.load(
             flow_checkpoint,
             map_location=self.device,
             weights_only=False,
         )
+        if "fm_model_config" not in checkpoint:
+            raise ValueError(
+                "latent diagnostics only support Transformer Flow checkpoints "
+                "containing fm_model_config"
+            )
+        self.model_cfg = FlowMatchingModelConfig(**checkpoint["fm_model_config"])
+        self.flow = FlowMatching(
+            model_config=self.model_cfg,
+            device=self.device,
+        ).eval()
+        self.category_num = self.model_cfg.category_num
+        self.sampling_steps = sampling_steps or self.model_cfg.total_steps
+        self.num_tokens = self.vae.latent_size * self.vae.latent_size
+        configured_tokens = getattr(self.model_cfg, "num_tokens", self.num_tokens)
+        if configured_tokens != self.num_tokens:
+            raise ValueError(
+                f"Flow model num_tokens={configured_tokens} "
+                "does not match VAE latent grid "
+                f"{self.vae.latent_size}x{self.vae.latent_size}="
+                f"{self.num_tokens} tokens"
+            )
+
         self.flow.load_state_dict(checkpoint["model"])
+        if "latent_mean" in checkpoint and "latent_std" in checkpoint:
+            self.latent_mean = checkpoint["latent_mean"].to(self.device)
+            self.latent_std = checkpoint["latent_std"].to(self.device)
+        else:
+            # Older checkpoints trained directly in the VAE latent coordinate
+            # system and therefore used an identity normalization.
+            self.latent_mean = torch.zeros(
+                1,
+                1,
+                self.model_cfg.latent_channels,
+                device=self.device,
+            )
+            self.latent_std = torch.ones_like(self.latent_mean)
 
         # 真实 latent 的类别边界来自目录名；类别 index 必须和训练时
         # DataHolder 使用的 sorted(category_name) 顺序一致。
         self.categories = self._find_categories(Path(cfg.data_cfg.train_dir))
-        if len(self.categories) != self.model_cfg.category_num:
+        if len(self.categories) != self.category_num:
             raise ValueError(
                 f"found {len(self.categories)} categories, expected "
-                f"{self.model_cfg.category_num}"
+                f"{self.category_num}"
             )
 
     @staticmethod
@@ -233,9 +264,9 @@ class LatentDistributionAnalyzer:
         return torch.cat(chunks, dim=0)
 
     def _sample_class(self, class_index: int, count: int) -> torch.Tensor:
-        """采样一个类别的 Flow latent。
+        """采样一个类别的生成 latent。
 
-        初始状态是 ``z_0 ~ N(0, I)``。随后用显式 Euler 积分近似：
+        Flow 从 ``z_0 ~ N(0, I)`` 开始，用显式 Euler 积分近似：
 
             z_{k+1} = z_k + dt * v_theta(z_k, t_k, class)
 
@@ -250,7 +281,7 @@ class LatentDistributionAnalyzer:
         # 是该类别的多个生成样本，而不是重复同一张 latent。
         labels = torch.zeros(
             self.batch_size,
-            self.model_cfg.category_num,
+            self.category_num,
             device=self.device,
         )
         labels[:, class_index] = 1.0
@@ -258,14 +289,14 @@ class LatentDistributionAnalyzer:
         with torch.inference_mode():
             for start in range(0, count, self.batch_size):
                 current = min(self.batch_size, count - start)
+                current_labels = labels[:current]
                 latent = torch.randn(
                     current,
-                    self.vae.latent_size * self.vae.latent_size,
+                    self.num_tokens,
                     self.model_cfg.latent_channels,
                     device=self.device,
                     generator=generator,
                 )
-                current_labels = labels[:current]
                 for step in range(self.sampling_steps):
                     # 模型训练时的时间范围是 [0, 1)，所以最后一次使用
                     # t=(steps-1)/steps，并把状态推进到近似 t=1。
@@ -274,12 +305,16 @@ class LatentDistributionAnalyzer:
                         step / self.sampling_steps,
                         device=self.device,
                     )
-                    latent = latent + (1.0 / self.sampling_steps) * self.flow(
+                    latent = latent + (
+                        1.0 / self.sampling_steps
+                    ) * self.flow(
                         latent,
                         time,
                         current_labels,
                     )
-                result.append(latent)
+                # Restore the VAE latent scale before comparing with real
+                # ``VAE.encode_tokens`` outputs.
+                result.append(latent * self.latent_std + self.latent_mean)
         return torch.cat(result, dim=0)
 
     def _roundtrip_rmse(self, latents: torch.Tensor) -> float:
@@ -320,7 +355,7 @@ class LatentDistributionAnalyzer:
             # 使用真实类别的 mean/std 定义参考坐标系；这里的 3 sigma
             # 是一个简单、可解释的异常比例指标，不等价于完整概率密度。
             z_score = (sampled - real_mean) / (real_std + eps)
-            # 保留 token 维度重新统计。全局统计会把 64 个空间位置混在一起，
+            # 保留 token 维度重新统计。全局统计会把所有空间位置混在一起，
             # 可能掩盖“总体分布正常但空间布局错误”的问题。
             real_token_mean = real.mean(dim=0)
             real_token_std = real.std(dim=0, unbiased=False)
@@ -372,7 +407,7 @@ class LatentDistributionAnalyzer:
 def print_reports(reports: list[ClassReport]) -> None:
     """打印适合快速比较的类别级摘要。
 
-    JSON 文件保留四个 channel 的完整数值；终端表格只打印四个 channel
+    JSON 文件保留全部 channel 的完整数值；终端表格只打印各 channel
     的平均差异，避免把屏幕变成一张难以阅读的数字墙。
     """
     print(
@@ -402,10 +437,10 @@ def write_markdown_report(
 
     JSON 适合后续程序处理；Markdown 适合人工检查，尤其是逐 token 的
     空间差异。token index 使用 VAE ``flatten(start_dim=2).transpose(1, 2)``
-    的顺序，因此 index 0 到 63 对应 8x8 latent grid 的行优先位置。
+    的顺序，因此 index 按 latent grid 行优先排列。
     """
     lines = [
-        "# Flow Matching latent distribution report",
+        "# Transformer Flow latent distribution report",
         "",
         f"- checkpoint: `{checkpoint}`",
         f"- sampling steps: `{sampling_steps}`",
@@ -440,14 +475,17 @@ def write_markdown_report(
             f"{report.lowest_std_ratio_token} ({report.lowest_std_ratio_value:.4f}) |"
         )
 
+    grid_size = int(
+        math.sqrt(len(reports[0].token_mean_abs_error)) if reports else 0
+    )
     lines.extend(["", "## 逐 token 空间结果", ""])
     for report in reports:
         lines.extend(
             [
                 f"### {report.class_name}",
                 "",
-                "`token` 按 8x8 latent grid 行优先编号；`mean|Δ|` 和 `std-ratio` "
-                "是该 token 四个 channel 的平均值。",
+                f"`token` 按 {grid_size}x{grid_size} latent grid 行优先编号；"
+                "`mean|Δ|` 和 `std-ratio` 是该 token 所有 channel 的平均值。",
                 "",
                 "| token | row | col | mean|Δ| | std-ratio |",
                 "|---:|---:|---:|---:|---:|",
@@ -457,7 +495,7 @@ def write_markdown_report(
             zip(report.token_mean_abs_error, report.token_std_ratio)
         ):
             lines.append(
-                f"| {token} | {token // 8} | {token % 8} | "
+                f"| {token} | {token // grid_size} | {token % grid_size} | "
                 f"{mean_error:.4f} | {std_ratio:.4f} |"
             )
         lines.append("")
@@ -471,12 +509,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint",
         type=Path,
-        default=Path("outputs/flow_matching_epoch.pt"),
+        default=Path(
+            "outputs_flow_transformer_latent32_ds4_bs512_e200/"
+            "flow_matching_best.pt"
+        ),
     )
     parser.add_argument(
         "--vae-checkpoint",
         type=Path,
-        default=Path("outputs/vae_best.pt"),
+        default=Path(
+            "outputs_vae_latent32_ds4_ssim01_lpips01_bs512_e200/vae_best.pt"
+        ),
     )
     parser.add_argument("--max-real", type=int, default=512)
     parser.add_argument("--generated", type=int, default=512)
@@ -487,12 +530,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("outputs/latent_distribution.json"),
+        default=Path(
+            "outputs_flow_transformer_latent32_ds4_bs512_e200/"
+            "latent_distribution.json"
+        ),
     )
     parser.add_argument(
         "--report",
         type=Path,
-        default=Path("outputs/latent_distribution.md"),
+        default=Path(
+            "outputs_flow_transformer_latent32_ds4_bs512_e200/"
+            "latent_distribution.md"
+        ),
         help="带字段解释和逐 token 表格的 Markdown 报告",
     )
     return parser.parse_args()
@@ -523,7 +572,7 @@ def main() -> None:
     args.output.write_text(
         json.dumps(
             {
-                "_description": "按类别比较 VAE latent 与 Flow Matching latent。",
+                "_description": "按类别比较 VAE latent 与 Transformer Flow 生成 latent。",
                 "_field_descriptions": FIELD_DESCRIPTIONS,
                 "reports": [asdict(report) for report in reports],
             },

@@ -16,7 +16,7 @@ from torchvision.utils import make_grid, save_image
 from config import FMConfig
 from dataset import ImgDataset
 from utils import get_logger, set_seed
-from vae import VAE, vae_loss
+from vae import LPIPSLoss, VAE, VAELossResult, vae_loss
 
 logger = get_logger()
 
@@ -38,7 +38,10 @@ class LossMetrics:
 
     # 一个 epoch 结束后只创建一次，避免在每条样本的热路径中反复分配对象。
     loss: float  # reconstruction + kl_weight * kl
-    reconstruction: float  # MSE(reconstruction, target)
+    reconstruction: float  # weighted reconstruction objective
+    mse: float
+    ssim: float  # 1 - SSIM
+    lpips: float
     kl: float  # Gaussian posterior 与标准正态先验之间的 KL
 
 
@@ -55,6 +58,11 @@ class VAETrainer:
         # 运行级配置：固定随机种子，并把逻辑设备与输出路径保存到实例中。
         self.cfg: FMConfig = cfg
         set_seed(cfg.vae_train_cfg.seed)
+        if cfg.data_cfg.image_size != cfg.train_cfg.img_size:
+            raise ValueError(
+                f"DataConfig.image_size={cfg.data_cfg.image_size} does not match "
+                f"FlowMatchingTrainConfig.img_size={cfg.train_cfg.img_size}"
+            )
         self.device: torch.device = torch.device(cfg.vae_train_cfg.device)
         self.output_dir: Path = Path(cfg.vae_train_cfg.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -91,6 +99,9 @@ class VAETrainer:
         self.model: VAE = VAE(config=cfg.vae_cfg, image_size=cfg.train_cfg.img_size).to(
             self.device
         )
+        self.lpips: LPIPSLoss | None = None
+        if cfg.vae_train_cfg.lpips_weight > 0:
+            self.lpips = LPIPSLoss(device=self.device).eval()
         self.optimizer: torch.optim.AdamW = torch.optim.AdamW(
             self.model.parameters(),
             lr=cfg.vae_train_cfg.lr,
@@ -139,6 +150,27 @@ class VAETrainer:
         logger.info(f"training complete, best checkpoint:{self.best_path}")
         return 0
 
+    def _compute_loss_terms(
+        self,
+        images: torch.Tensor,
+        output: ForwardResult,
+    ) -> VAELossResult:
+        """Compute weighted reconstruction components for one batch."""
+        lpips_distance = None
+        if self.lpips is not None:
+            lpips_distance = self.lpips(output.reconstruction, images)
+        return vae_loss(
+            images,
+            output.reconstruction,
+            output.mean,
+            output.logvar,
+            kl_weight=self.cfg.vae_train_cfg.kl_weight,
+            l1_weight=self.cfg.vae_train_cfg.l1_weight,
+            ssim_weight=self.cfg.vae_train_cfg.ssim_weight,
+            lpips_weight=self.cfg.vae_train_cfg.lpips_weight,
+            lpips_distance=lpips_distance,
+        )
+
     def train_one_epoch(self) -> LossMetrics:
         """Run one training pass and return its average loss components."""
         # seperator
@@ -148,7 +180,8 @@ class VAETrainer:
         self.model.train()
 
         # 逐 batch 先累加 Python float，epoch 结束后再统一构造一次 LossMetrics。
-        loss_sum = reconstruction_sum = kl_sum = 0.0
+        loss_sum = reconstruction_sum = mse_sum = 0.0
+        ssim_sum = lpips_sum = kl_sum = 0.0
         batches: int = 0
 
         # ImgDataset 返回 (image, one-hot label)；VAE 重建是无监督任务，label 被忽略。
@@ -158,32 +191,32 @@ class VAETrainer:
 
             # 训练时从 posterior 采样 latent，以保留 VAE 的随机性。
             output = self.forward(images, sample_latent=True)
-            loss, reconstruction_loss, kl_loss = vae_loss(
-                images,
-                output.reconstruction,
-                output.mean,
-                output.logvar,
-                kl_weight=self.cfg.vae_train_cfg.kl_weight,
-            )
+            loss_terms = self._compute_loss_terms(images, output)
 
             # AMP 顺序不能随意调换：先 scale/backward，再 unscale，之后才能安全裁剪梯度。
-            self.scaler.scale(loss).backward()
+            self.scaler.scale(loss_terms.total).backward()
             self.scaler.unscale_(self.optimizer)
             nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.scaler.step(self.optimizer)
             self.scaler.update()
-            loss_sum += loss.detach().item()
-            reconstruction_sum += reconstruction_loss.detach().item()
-            kl_sum += kl_loss.detach().item()
+            loss_sum += loss_terms.total.detach().item()
+            reconstruction_sum += loss_terms.reconstruction.detach().item()
+            mse_sum += loss_terms.mse.detach().item()
+            ssim_sum += loss_terms.ssim.detach().item()
+            lpips_sum += loss_terms.lpips.detach().item()
+            kl_sum += loss_terms.kl.detach().item()
             batches += 1
 
         # 空 loader 通常意味着数据路径或数据集配置有误，直接失败比返回 0 loss 更安全。
         if not batches:
             raise RuntimeError("training loader produced no batches")
         return LossMetrics(
-            loss_sum / batches,
-            reconstruction_sum / batches,
-            kl_sum / batches,
+            loss=loss_sum / batches,
+            reconstruction=reconstruction_sum / batches,
+            mse=mse_sum / batches,
+            ssim=ssim_sum / batches,
+            lpips=lpips_sum / batches,
+            kl=kl_sum / batches,
         )
 
     @torch.inference_mode()
@@ -193,7 +226,8 @@ class VAETrainer:
         """Evaluate the validation loader and retain its first batch."""
         # inference_mode 关闭 autograd，并禁止参数更新；上方装饰器负责整个验证过程。
         self.model.eval()
-        loss_sum = reconstruction_sum = kl_sum = 0.0
+        loss_sum = reconstruction_sum = mse_sum = 0.0
+        ssim_sum = lpips_sum = kl_sum = 0.0
         batches: int = 0
         images: torch.Tensor | None = None
         reconstructions: torch.Tensor | None = None
@@ -202,30 +236,30 @@ class VAETrainer:
 
             # 验证使用 posterior mean，避免每次采样导致 loss 和重建图随机抖动。
             output = self.forward(batch, sample_latent=False)
-            loss, reconstruction_loss, kl_loss = vae_loss(
-                batch,
-                output.reconstruction,
-                output.mean,
-                output.logvar,
-                kl_weight=self.cfg.vae_train_cfg.kl_weight,
-            )
+            loss_terms = self._compute_loss_terms(batch, output)
 
             # 只保留第一个验证 batch 的 Tensor 到 CPU，作为图片对比的固定样本。
             if images is None:
                 images = batch.detach().cpu()
                 reconstructions = output.reconstruction.detach().float().cpu()
-            loss_sum += loss.detach().item()
-            reconstruction_sum += reconstruction_loss.detach().item()
-            kl_sum += kl_loss.detach().item()
+            loss_sum += loss_terms.total.detach().item()
+            reconstruction_sum += loss_terms.reconstruction.detach().item()
+            mse_sum += loss_terms.mse.detach().item()
+            ssim_sum += loss_terms.ssim.detach().item()
+            lpips_sum += loss_terms.lpips.detach().item()
+            kl_sum += loss_terms.kl.detach().item()
             batches += 1
         if not batches or images is None or reconstructions is None:
             raise RuntimeError("validation loader produced no batches")
 
         # 这里是 batch 均值的均值；验证尾批较小时，不等价于按样本数加权平均。
         metrics = LossMetrics(
-            loss_sum / batches,
-            reconstruction_sum / batches,
-            kl_sum / batches,
+            loss=loss_sum / batches,
+            reconstruction=reconstruction_sum / batches,
+            mse=mse_sum / batches,
+            ssim=ssim_sum / batches,
+            lpips=lpips_sum / batches,
+            kl=kl_sum / batches,
         )
         return metrics, images, reconstructions
 
@@ -271,7 +305,14 @@ class VAETrainer:
                 "optimizer": self.optimizer.state_dict(),
                 # 模型配置和 image_size 都保存，VAE.from_checkpoint 才能重建正确结构。
                 "vae_config": asdict(self.cfg.vae_cfg),
+                "latent_channels": self.model.latent_channels,
                 "image_size": self.cfg.train_cfg.img_size,
+                "reconstruction_weights": {
+                    "kl": self.cfg.vae_train_cfg.kl_weight,
+                    "l1": self.cfg.vae_train_cfg.l1_weight,
+                    "ssim": self.cfg.vae_train_cfg.ssim_weight,
+                    "lpips": self.cfg.vae_train_cfg.lpips_weight,
+                },
                 # 保留数据路径快照，便于追溯该 checkpoint 来自哪组训练数据。
                 "data_config": {
                     "data_dir": str(self.cfg.data_cfg.data_dir),
@@ -304,9 +345,15 @@ class VAETrainer:
         parameters = sum(parameter.numel() for parameter in self.model.parameters())
         logger.info(f"device:{self.device}")
         logger.info(f"image_size:{self.cfg.train_cfg.img_size}")
-        logger.info(f"latent_channels:{self.cfg.vae_cfg.latent_channels}")
+        logger.info(f"latent_channels:{self.model.latent_channels}")
         logger.info(f"latent_size:{self.model.latent_size}")
         logger.info(f"parameters:{parameters}")
+        logger.info(
+            f"loss_weights: mse=1.0, l1={self.cfg.vae_train_cfg.l1_weight}, "
+            f"ssim={self.cfg.vae_train_cfg.ssim_weight}, "
+            f"lpips={self.cfg.vae_train_cfg.lpips_weight}, "
+            f"kl={self.cfg.vae_train_cfg.kl_weight}"
+        )
         logger.info(f"train:{len(self.train_dataset)}, test:{len(self.test_dataset)}")
 
     @staticmethod
@@ -323,6 +370,9 @@ class VAETrainer:
         for prefix, metrics in (("train", train), ("validation", validation)):
             logger.info(f"{prefix} loss:{metrics.loss:.6f}")
             logger.info(f"{prefix} reconstruction:{metrics.reconstruction:.6f}")
+            logger.info(f"{prefix} mse:{metrics.mse:.6f}")
+            logger.info(f"{prefix} ssim loss:{metrics.ssim:.6f}")
+            logger.info(f"{prefix} lpips:{metrics.lpips:.6f}")
             logger.info(f"{prefix} kl:{metrics.kl:.4f}")
 
 
@@ -335,6 +385,51 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--resume", type=Path, help="optional checkpoint from which to resume"
     )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help="override VAETrainConfig.epochs for this run",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="override the checkpoint and sample output directory",
+    )
+    parser.add_argument(
+        "--downsample-factor",
+        type=int,
+        default=None,
+        help="override VAEConfig.downsample_factor for this run",
+    )
+    parser.add_argument(
+        "--latent-channels",
+        type=int,
+        default=None,
+        help=(
+            "explicit VAE latent channel count; omit it to preserve every "
+            "channel produced by the final encoder stage"
+        ),
+    )
+    parser.add_argument(
+        "--l1-weight",
+        type=float,
+        default=None,
+        help="add L1 reconstruction loss with this weight",
+    )
+    parser.add_argument(
+        "--ssim-weight",
+        type=float,
+        default=None,
+        help="add (1 - SSIM) reconstruction loss with this weight",
+    )
+    parser.add_argument(
+        "--lpips-weight",
+        type=float,
+        default=None,
+        help="add LPIPS reconstruction loss with this weight",
+    )
     return parser
 
 
@@ -342,7 +437,32 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Parse CLI arguments and run the configured trainer."""
     # 显式返回 0，让 SystemExit 的退出码与训练成功保持一致。
     args = build_parser().parse_args(argv)
-    return VAETrainer(FMConfig()).run(args.resume)
+    cfg = FMConfig()
+    if args.epochs is not None:
+        if args.epochs <= 0:
+            raise ValueError("--epochs must be positive")
+        cfg.vae_train_cfg.epochs = args.epochs
+    if args.output_dir is not None:
+        cfg.vae_train_cfg.output_dir = str(args.output_dir)
+    if args.downsample_factor is not None:
+        cfg.vae_cfg.downsample_factor = args.downsample_factor
+    if args.latent_channels is not None:
+        if args.latent_channels <= 0:
+            raise ValueError("--latent-channels must be positive")
+        cfg.vae_cfg.latent_channels = args.latent_channels
+    if args.l1_weight is not None:
+        if args.l1_weight < 0:
+            raise ValueError("--l1-weight must be non-negative")
+        cfg.vae_train_cfg.l1_weight = args.l1_weight
+    if args.ssim_weight is not None:
+        if args.ssim_weight < 0:
+            raise ValueError("--ssim-weight must be non-negative")
+        cfg.vae_train_cfg.ssim_weight = args.ssim_weight
+    if args.lpips_weight is not None:
+        if args.lpips_weight < 0:
+            raise ValueError("--lpips-weight must be non-negative")
+        cfg.vae_train_cfg.lpips_weight = args.lpips_weight
+    return VAETrainer(cfg).run(args.resume)
 
 
 if __name__ == "__main__":

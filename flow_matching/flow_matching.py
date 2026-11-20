@@ -115,6 +115,100 @@ class SinusoidalPositionEmbedding(nn.Module):
         return self.embedding
 
 
+class AdaLNZeroTransformerBlock(nn.Module):
+    """Transformer block with per-sample scale, shift, and residual gates.
+
+    The final modulation projection starts at zero.  Every block is therefore
+    an identity residual block at initialization, then learns how strongly the
+    global time-and-class condition should modulate attention and the MLP.
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        dim_feedforward: int,
+        *,
+        dropout: float = 0.1,
+    ) -> None:
+        super().__init__()
+        self.norm1 = nn.LayerNorm(
+            d_model,
+            elementwise_affine=False,
+            eps=1e-6,
+        )
+        self.attn = nn.MultiheadAttention(
+            embed_dim=d_model,
+            num_heads=nhead,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.norm2 = nn.LayerNorm(
+            d_model,
+            elementwise_affine=False,
+            eps=1e-6,
+        )
+        self.mlp = nn.Sequential(
+            nn.Linear(d_model, dim_feedforward),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim_feedforward, d_model),
+        )
+        self.ada_ln_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(d_model, 6 * d_model),
+        )
+
+        # AdaLN-Zero: start every block as an identity operation.
+        nn.init.zeros_(self.ada_ln_modulation[-1].weight)
+        nn.init.zeros_(self.ada_ln_modulation[-1].bias)
+
+    def forward(
+        self,
+        hidden: torch.Tensor,
+        condition: torch.Tensor,
+    ) -> torch.Tensor:
+        """Apply one globally conditioned attention/MLP block.
+
+        Args:
+            hidden: Token features with shape ``[batch, n_token, d_model]``.
+            condition: One global vector per batch item, shape
+                ``[batch, d_model]``.
+        """
+        if hidden.ndim != 3:
+            raise ValueError(f"hidden must have rank 3, got {hidden.shape}")
+        if condition.shape != (hidden.shape[0], hidden.shape[2]):
+            raise ValueError(
+                "condition must have shape "
+                f"[{hidden.shape[0]}, {hidden.shape[2]}], got {condition.shape}"
+            )
+
+        modulations = self.ada_ln_modulation(condition)[:, None, :]
+        (
+            shift_attention,
+            scale_attention,
+            gate_attention,
+            shift_mlp,
+            scale_mlp,
+            gate_mlp,
+        ) = modulations.chunk(6, dim=-1)
+
+        normalized = self.norm1(hidden)
+        normalized = normalized * (1.0 + scale_attention) + shift_attention
+        attention_output, _ = self.attn(
+            normalized,
+            normalized,
+            normalized,
+            need_weights=False,
+        )
+        hidden = hidden + gate_attention * attention_output
+
+        normalized = self.norm2(hidden)
+        normalized = normalized * (1.0 + scale_mlp) + shift_mlp
+        mlp_output = self.mlp(normalized)
+        return hidden + gate_mlp * mlp_output
+
+
 class FlowMatching(nn.Module):
     def __init__(
         self,
@@ -127,61 +221,77 @@ class FlowMatching(nn.Module):
         )
         self.d_model: int = model_config.d_model  # model dim
         self.latent_channels: int = model_config.latent_channels
+        self.num_tokens: int = model_config.num_tokens
         self.category_num: int = model_config.category_num
         self.n_layer: int = model_config.n_layer  # layer of model
         self.total_steps: int = (
             model_config.total_steps
         )  # total steps for flow matching
         self.n_head: int = model_config.n_head  # head for transformers
+        self.conditioning: str = model_config.conditioning
 
         logger.info(
-            f"self.d_model:{self.d_model}, self.n_layer:{self.n_layer}, self.total_steps: {self.total_steps}, self.n_head: {self.n_head}"
+            f"self.d_model:{self.d_model}, self.n_layer:{self.n_layer}, "
+            f"self.total_steps:{self.total_steps}, self.n_head:{self.n_head}, "
+            f"self.conditioning:{self.conditioning}, "
+            f"self.num_tokens:{self.num_tokens}"
         )
 
         # check
         if (
             self.d_model <= 0
             or self.latent_channels <= 0
+            or self.num_tokens <= 0
             or self.category_num <= 0
             or self.n_layer <= 0
             or self.n_head <= 0
             or self.total_steps <= 0
         ):
             raise RuntimeError(
-                "d_model, latent_channels, category_num, n_layer, n_head, "
-                "and total_steps must all be positive"
+                "d_model, latent_channels, num_tokens, category_num, n_layer, "
+                "n_head, and total_steps must all be positive"
             )
 
         if self.d_model % self.n_head != 0:
             raise RuntimeError(
                 f"d_model={self.d_model} must be divisible by n_head={self.n_head}"
             )
+        if self.conditioning != "ada_ln_zero":
+            raise RuntimeError(
+                "this FlowMatching implementation expects "
+                "conditioning='ada_ln_zero'"
+            )
 
         # calculate
         self.one_step: float = 1.0 / self.total_steps
         logger.info(f"self.one_step:{self.one_step}")
 
-        # VAE tokens are narrow [B, S, 4], so project them to Transformer width.
+        # Project the VAE token width to the Transformer hidden dimension.
         self.input_proj = nn.Linear(self.latent_channels, self.d_model)
-        # An 8x8 VAE latent grid becomes 64 tokens. The fixed sinusoidal
-        # coordinates make the attention layers aware of token order.
+        # The fixed sinusoidal coordinates make attention aware of token order.
         self.position_embed = SinusoidalPositionEmbedding(
-            num_positions=64,
+            num_positions=self.num_tokens,
             embedding_dim=self.d_model,
         )
         self.time_embed = TimestepEmbedding(self.d_model)
         self.label_embed = nn.Linear(self.category_num, self.d_model)
+        self.condition_mlp = nn.Sequential(
+            nn.Linear(2 * self.d_model, self.d_model),
+            nn.SiLU(),
+            nn.Linear(self.d_model, self.d_model),
+        )
 
-        # flow matching with transformer
-        self.flow_matching = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(
-                d_model=self.d_model,
-                nhead=self.n_head,
-                dim_feedforward=4 * self.d_model,
-                activation="gelu",
-                batch_first=True,
-            ),
-            num_layers=self.n_layer,
+        # Every block receives the same global time/class embedding but learns
+        # its own scale, shift, and residual gates through AdaLN-Zero.
+        self.flow_matching = nn.ModuleList(
+            [
+                AdaLNZeroTransformerBlock(
+                    d_model=self.d_model,
+                    nhead=self.n_head,
+                    dim_feedforward=4 * self.d_model,
+                )
+                for _ in range(self.n_layer)
+            ]
         )
 
         # The public flow interface stays in VAE latent space.
@@ -277,9 +387,15 @@ class FlowMatching(nn.Module):
             raise ValueError(err)
 
         hidden = self.input_proj(xt) + self.position_embed()
-        condition = self.time_embed(time) + self.label_embed(label_batch)
-        hidden = hidden + condition[:, None, :]
-        pred_velocity = self.output_proj(self.flow_matching(hidden))
+        condition = self.condition_mlp(
+            torch.cat(
+                (self.time_embed(time), self.label_embed(label_batch)),
+                dim=-1,
+            )
+        )
+        for block in self.flow_matching:
+            hidden = block(hidden, condition)
+        pred_velocity = self.output_proj(hidden)
 
         return pred_velocity
 
@@ -311,7 +427,10 @@ if __name__ == "__main__":
     model_cfg = FlowMatchingModelConfig()
     device = DEVICE
     flow_matching_net = FlowMatching(model_config=model_cfg, device=device)
-    x1 = torch.randn(size=[64, 32, model_cfg.latent_channels], device=device)
+    x1 = torch.randn(
+        size=[64, model_cfg.num_tokens, model_cfg.latent_channels],
+        device=device,
+    )
     x0 = torch.randn_like(x1, device=x1.device)
     class_ids = torch.arange(x1.shape[0], device=device) % model_cfg.category_num
     label_batch = torch.eye(model_cfg.category_num, device=device)[class_ids]

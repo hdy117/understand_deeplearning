@@ -1,12 +1,12 @@
 # Pixel U-Net Flow Matching 设计
 
 - 日期：2026-11-18
-- 状态：待评审
+- 状态：已实施并通过结构与 40 epoch 实验验证
 - 范围：新增完全绕过 VAE 的 64×64 像素空间 Conv2D U-Net Flow Matching 实验
 
 ## 背景
 
-当前所有生成模型都先由 structural VAE 编码到 `[B,4,16,16]` latent，再由 Flow 或 DDPM 生成 latent，最后交给 VAE decoder。真实 latent 的重建质量很好，但 Flow 和 DDPM 的生成 latent 解码后仍有结构伪影。一个主要怀疑是 structural VAE 是 reconstruction-oriented autoencoder，生成 latent 可能偏离 decoder 熟悉的有效 manifold。
+此前 latent 生成路径都先由 structural VAE 编码，再把生成 latent 交给 VAE decoder。真实 latent 的重建质量很好，但生成 latent 解码后仍有结构伪影。一个主要怀疑是 structural VAE 是 reconstruction-oriented autoencoder，生成 latent 可能偏离 decoder 熟悉的有效 manifold。
 
 本设计新增一条完全独立的 Pixel U-Net Flow 路径。它不加载 VAE，不计算 latent 统计，也不经过 encode/decode；模型直接接收 `[B,3,64,64]` 图像并预测像素空间 velocity。
 
